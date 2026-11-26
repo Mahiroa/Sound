@@ -17,9 +17,21 @@
         "type": "slider",
         "value": 1
       },
+      "auroraAudioIntensity": {
+        "fraction": true,
+        "index": 63,
+        "max": 2,
+        "min": 0,
+        "order": 118,
+        "precision": 2,
+        "step": 0.05,
+        "text": "极光音频响应 / Aurora Audio Response",
+        "type": "slider",
+        "value": 1
+      },
       "autoRotateEnabled": {
         "index": 35,
-        "order": 139,
+        "order": 140,
         "text": "自动旋转 / Auto Rotate",
         "type": "bool",
         "value": true
@@ -28,7 +40,7 @@
         "index": 36,
         "max": 60,
         "min": 1,
-        "order": 140,
+        "order": 141,
         "step": 1,
         "text": "旋转速度 / Rotate Speed",
         "type": "slider",
@@ -38,7 +50,7 @@
         "index": 33,
         "max": 360,
         "min": 0,
-        "order": 137,
+        "order": 138,
         "step": 5,
         "text": "水平角度 / Horizontal Angle",
         "type": "slider",
@@ -48,7 +60,7 @@
         "index": 34,
         "max": 70,
         "min": 10,
-        "order": 138,
+        "order": 139,
         "step": 5,
         "text": "垂直仰角 / Vertical Angle",
         "type": "slider",
@@ -58,7 +70,7 @@
         "index": 32,
         "max": 100,
         "min": 20,
-        "order": 136,
+        "order": 137,
         "step": 5,
         "text": "视角距离 / Camera Distance",
         "type": "slider",
@@ -78,7 +90,7 @@
       },
       "clockColor": {
         "index": 49,
-        "order": 153,
+        "order": 154,
         "text": "时钟颜色 / Clock Color",
         "type": "color",
         "value": "1 1 1"
@@ -99,14 +111,14 @@
             "value": "short"
           }
         ],
-        "order": 156,
+        "order": 157,
         "text": "日期格式 / Date Style",
         "type": "combo",
         "value": "iso"
       },
       "clockEnabled": {
         "index": 46,
-        "order": 150,
+        "order": 151,
         "text": "显示时钟 / Show Clock",
         "type": "bool",
         "value": true
@@ -191,14 +203,14 @@
             "value": "monospace"
           }
         ],
-        "order": 151,
+        "order": 152,
         "text": "时钟字体 / Clock Font",
         "type": "combo",
         "value": "Impact"
       },
       "clockGlassEnabled": {
         "index": 53,
-        "order": 157,
+        "order": 158,
         "text": "毛玻璃背景 / Glass Effect",
         "type": "bool",
         "value": false
@@ -207,7 +219,7 @@
         "index": 54,
         "max": 30,
         "min": 0,
-        "order": 158,
+        "order": 159,
         "step": 1,
         "text": "模糊强度 / Blur Strength",
         "type": "slider",
@@ -217,7 +229,7 @@
         "index": 50,
         "max": 1,
         "min": 0.1,
-        "order": 154,
+        "order": 155,
         "step": 0.05,
         "text": "时钟透明度 / Clock Opacity",
         "type": "slider",
@@ -225,14 +237,14 @@
       },
       "clockShadowEnabled": {
         "index": 57,
-        "order": 159,
+        "order": 160,
         "text": "时钟阴影 / Clock Shadow",
         "type": "bool",
         "value": false
       },
       "clockShowSeconds": {
         "index": 51,
-        "order": 155,
+        "order": 156,
         "text": "显示秒 / Show Seconds",
         "type": "bool",
         "value": true
@@ -241,7 +253,7 @@
         "index": 48,
         "max": 200,
         "min": 16,
-        "order": 152,
+        "order": 153,
         "step": 1,
         "text": "时钟字号 / Clock Size",
         "type": "slider",
@@ -251,7 +263,7 @@
         "index": 58,
         "max": 100,
         "min": 0,
-        "order": 160,
+        "order": 161,
         "step": 1,
         "text": "水平位置(%) / Clock X (%)",
         "type": "slider",
@@ -261,7 +273,7 @@
         "index": 55,
         "max": 100,
         "min": 0,
-        "order": 161,
+        "order": 162,
         "step": 1,
         "text": "垂直位置(%) / Clock Y (%)",
         "type": "slider",
@@ -283,7 +295,7 @@
             "value": "large"
           }
         ],
-        "order": 145,
+        "order": 146,
         "text": "控制器尺寸 / Controller Size",
         "type": "combo",
         "value": "large"
@@ -292,7 +304,7 @@
         "index": 42,
         "max": 80,
         "min": 0,
-        "order": 146,
+        "order": 147,
         "step": 1,
         "text": "控制器水平位置 (%) / Controller X (%)",
         "type": "slider",
@@ -302,7 +314,7 @@
         "index": 43,
         "max": 90,
         "min": 0,
-        "order": 147,
+        "order": 148,
         "step": 1,
         "text": "控制器垂直位置 (%) / Controller Y (%)",
         "type": "slider",
@@ -312,7 +324,7 @@
         "index": 56,
         "max": 1,
         "min": 0,
-        "order": 162,
+        "order": 163,
         "step": 0.05,
         "text": "封面主色混合 / Cover Color Mix",
         "type": "slider",
@@ -359,7 +371,7 @@
         "index": 28,
         "max": 5,
         "min": 0.5,
-        "order": 132,
+        "order": 133,
         "step": 0.5,
         "text": "空闲波浪防抖 (秒) / Idle Debounce (s)",
         "type": "slider",
@@ -367,7 +379,7 @@
       },
       "idleWaveEnabled": {
         "index": 27,
-        "order": 131,
+        "order": 132,
         "text": "空闲波浪 / Idle Wave",
         "type": "bool",
         "value": true
@@ -376,7 +388,7 @@
         "index": 29,
         "max": 5,
         "min": 0.5,
-        "order": 133,
+        "order": 134,
         "step": 0.5,
         "text": "空闲波浪过渡 (秒) / Idle Fade (s)",
         "type": "slider",
@@ -396,7 +408,7 @@
       },
       "meteorClickEnabled": {
         "index": 24,
-        "order": 128,
+        "order": 129,
         "text": "点击触发流星 / Click Meteor",
         "type": "bool",
         "value": true
@@ -405,7 +417,7 @@
         "index": 23,
         "max": 400,
         "min": 0,
-        "order": 127,
+        "order": 128,
         "step": 10,
         "text": "流星冷却 (帧) / Meteor Cooldown (frames)",
         "type": "slider",
@@ -413,7 +425,7 @@
       },
       "meteorEnabled": {
         "index": 21,
-        "order": 125,
+        "order": 126,
         "text": "启用流星 / Enable Meteor",
         "type": "bool",
         "value": true
@@ -422,7 +434,7 @@
         "index": 22,
         "max": 0.8,
         "min": 0.1,
-        "order": 126,
+        "order": 127,
         "step": 0.05,
         "text": "流星灵敏度 / Meteor Sensitivity",
         "type": "slider",
@@ -461,7 +473,7 @@
         "index": 18,
         "max": 200,
         "min": 0,
-        "order": 122,
+        "order": 123,
         "step": 5,
         "text": "波纹冷却 (帧) / Ripple Cooldown (frames)",
         "type": "slider",
@@ -469,7 +481,7 @@
       },
       "pulseEnabled": {
         "index": 16,
-        "order": 120,
+        "order": 121,
         "text": "启用波纹 / Enable Ripple",
         "type": "bool",
         "value": true
@@ -478,7 +490,7 @@
         "index": 17,
         "max": 0.5,
         "min": 0.05,
-        "order": 121,
+        "order": 122,
         "step": 0.01,
         "text": "波纹灵敏度 / Ripple Sensitivity",
         "type": "slider",
@@ -542,70 +554,70 @@
       },
       "sep_camera": {
         "index": 30,
-        "order": 134,
+        "order": 135,
         "text": " ",
         "type": "text",
         "value": ""
       },
       "sep_camera_title": {
         "index": 31,
-        "order": 135,
+        "order": 136,
         "text": "===视角 / Camera===",
         "type": "text",
         "value": ""
       },
       "sep_clock": {
         "index": 44,
-        "order": 148,
+        "order": 149,
         "text": " ",
         "type": "text",
         "value": ""
       },
       "sep_clock_title": {
         "index": 45,
-        "order": 149,
+        "order": 150,
         "text": "===时钟 / Clock===",
         "type": "text",
         "value": ""
       },
       "sep_idle": {
         "index": 25,
-        "order": 129,
+        "order": 130,
         "text": " ",
         "type": "text",
         "value": ""
       },
       "sep_idle_title": {
         "index": 26,
-        "order": 130,
+        "order": 131,
         "text": "===效果-空闲波浪 / Effect-Idle Wave===",
         "type": "text",
         "value": ""
       },
       "sep_meteor": {
         "index": 19,
-        "order": 123,
+        "order": 124,
         "text": " ",
         "type": "text",
         "value": ""
       },
       "sep_meteor_title": {
         "index": 20,
-        "order": 124,
+        "order": 125,
         "text": "===效果-流星 / Effect-Meteor===",
         "type": "text",
         "value": ""
       },
       "sep_player": {
         "index": 37,
-        "order": 141,
+        "order": 142,
         "text": " ",
         "type": "text",
         "value": ""
       },
       "sep_player_title": {
         "index": 38,
-        "order": 142,
+        "order": 143,
         "text": "===播放器 / Player===",
         "type": "text",
         "value": ""
@@ -626,28 +638,28 @@
       },
       "sep_ripple": {
         "index": 14,
-        "order": 118,
+        "order": 119,
         "text": " ",
         "type": "text",
         "value": ""
       },
       "sep_ripple_title": {
         "index": 15,
-        "order": 119,
+        "order": 120,
         "text": "===效果-波纹 / Effect-Ripple===",
         "type": "text",
         "value": ""
       },
       "showAlbumCover": {
         "index": 40,
-        "order": 144,
+        "order": 145,
         "text": "显示专辑封面 / Show Album Cover",
         "type": "bool",
         "value": true
       },
       "showPlayerController": {
         "index": 39,
-        "order": 143,
+        "order": 144,
         "text": "显示播放器控制器 / Show Player",
         "type": "bool",
         "value": false

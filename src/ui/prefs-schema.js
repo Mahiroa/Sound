@@ -29,6 +29,7 @@ export const PREFS_SCHEMA = [
   { key: "centerBoost", we: "centerBoost", default: 0.2 },
   { key: "randomSpikeIntensity", we: "randomSpikeIntensity", default: 0.3 },
   { key: "waveFlowIntensity", we: "waveFlowIntensity", default: 1 },
+  { key: "auroraAudioIntensity", we: "auroraAudioIntensity", default: 1 },
   { key: "gridSize", we: "gridSize", default: 96 },
   { key: "meteorClickEnabled", we: "meteorClickEnabled", default: true },
   { key: "peakColorEnabled", we: "peakColorEnabled", default: true },

@@ -79,7 +79,7 @@ const themes = {
     uMidCore: new se(0.52, 0.16, 0.95),
     uMidEdge: new se(0.3, 0.08, 0.68),
     uRippleColor: new se(0.5, 0.2, 1),
-    uPeakColor: new se(1, 0.55, 0.05),
+    uPeakColor: new se(1, 0.35, 0.9),
     uGlowIntensity: 1,
   },
   "ocean-deep": {
@@ -94,7 +94,7 @@ const themes = {
     uMidCore: new se(0.08, 0.4, 1),
     uMidEdge: new se(0.02, 0.2, 0.65),
     uRippleColor: new se(0.1, 0.5, 1),
-    uPeakColor: new se(1, 0.75, 0.1),
+    uPeakColor: new se(0.2, 0.92, 1),
     uGlowIntensity: 1.1,
   },
   "arctic-aurora": {
@@ -109,7 +109,7 @@ const themes = {
     uMidCore: new se(0.1, 0.88, 0.85),
     uMidEdge: new se(0.03, 0.55, 0.68),
     uRippleColor: new se(0.1, 0.9, 0.9),
-    uPeakColor: new se(1, 0.25, 0.35),
+    uPeakColor: new se(0.32, 1, 0.58),
     uGlowIntensity: 1.25,
   },
   "cyber-forest": {
@@ -124,7 +124,7 @@ const themes = {
     uMidCore: new se(0.2, 0.92, 0.32),
     uMidEdge: new se(0.05, 0.6, 0.25),
     uRippleColor: new se(0.3, 1, 0.4),
-    uPeakColor: new se(1, 0.2, 0.5),
+    uPeakColor: new se(0.68, 1, 0.28),
     uGlowIntensity: 1.3,
   },
   "golden-hour": {
@@ -139,7 +139,7 @@ const themes = {
     uMidCore: new se(0.93, 0.75, 0.2),
     uMidEdge: new se(0.7, 0.45, 0.04),
     uRippleColor: new se(1, 0.85, 0.25),
-    uPeakColor: new se(0.2, 0.5, 1),
+    uPeakColor: new se(1, 0.48, 0.22),
     uGlowIntensity: 1.2,
   },
   "ember-fire": {
@@ -154,7 +154,7 @@ const themes = {
     uMidCore: new se(1, 0.6, 0.08),
     uMidEdge: new se(0.8, 0.3, 0.02),
     uRippleColor: new se(1, 0.65, 0.1),
-    uPeakColor: new se(0.1, 0.4, 1),
+    uPeakColor: new se(1, 0.28, 0.18),
     uGlowIntensity: 1.5,
   },
   "crimson-sunset": {
@@ -169,7 +169,7 @@ const themes = {
     uMidCore: new se(1, 0.2, 0.14),
     uMidEdge: new se(0.82, 0.03, 0.06),
     uRippleColor: new se(1, 0.15, 0.1),
-    uPeakColor: new se(0.1, 0.9, 0.7),
+    uPeakColor: new se(1, 0.62, 0.15),
     uGlowIntensity: 1.4,
   },
   "coral-mirage": {
@@ -184,7 +184,7 @@ const themes = {
     uMidCore: new se(1, 0.4, 0.42),
     uMidEdge: new se(0.85, 0.16, 0.24),
     uRippleColor: new se(1, 0.4, 0.4),
-    uPeakColor: new se(0.1, 0.7, 1),
+    uPeakColor: new se(1, 0.7, 0.38),
     uGlowIntensity: 1.3,
   },
   "neon-tokyo": {
@@ -199,7 +199,7 @@ const themes = {
     uMidCore: new se(1, 0.15, 0.72),
     uMidEdge: new se(0.78, 0.04, 0.72),
     uRippleColor: new se(1, 0.2, 0.75),
-    uPeakColor: new se(0.95, 1, 0.15),
+    uPeakColor: new se(0.76, 0.35, 1),
     uGlowIntensity: 1.6,
   },
   "minimal-monochrome": {
@@ -229,7 +229,7 @@ const themes = {
     uMidCore: new se(0.1, 0.7, 0.65),
     uMidEdge: new se(0.02, 0.4, 0.42),
     uRippleColor: new se(0.15, 0.8, 0.7),
-    uPeakColor: new se(1, 0.45, 0.15),
+    uPeakColor: new se(0.25, 0.7, 1),
     uGlowIntensity: 1.2,
   },
   "lavender-dream": {
@@ -244,7 +244,7 @@ const themes = {
     uMidCore: new se(0.65, 0.45, 0.92),
     uMidEdge: new se(0.42, 0.25, 0.7),
     uRippleColor: new se(0.65, 0.45, 1),
-    uPeakColor: new se(1, 0.8, 0.25),
+    uPeakColor: new se(1, 0.58, 0.92),
     uGlowIntensity: 1.1,
   },
   "cherry-blossom": {
@@ -259,7 +259,7 @@ const themes = {
     uMidCore: new se(1, 0.63, 0.72),
     uMidEdge: new se(0.85, 0.38, 0.5),
     uRippleColor: new se(1, 0.6, 0.7),
-    uPeakColor: new se(0.25, 0.9, 0.55),
+    uPeakColor: new se(1, 0.62, 0.95),
     uGlowIntensity: 1.15,
   },
   "copper-forge": {
@@ -274,7 +274,7 @@ const themes = {
     uMidCore: new se(0.93, 0.55, 0.25),
     uMidEdge: new se(0.67, 0.34, 0.14),
     uRippleColor: new se(0.9, 0.55, 0.25),
-    uPeakColor: new se(0.3, 0.65, 0.35),
+    uPeakColor: new se(1, 0.92, 0.32),
     uGlowIntensity: 1.3,
   },
   "mint-fresh": {
@@ -289,7 +289,7 @@ const themes = {
     uMidCore: new se(0.4, 0.95, 0.72),
     uMidEdge: new se(0.2, 0.68, 0.48),
     uRippleColor: new se(0.4, 1, 0.7),
-    uPeakColor: new se(1, 0.3, 0.55),
+    uPeakColor: new se(0.35, 0.9, 1),
     uGlowIntensity: 1.2,
   },
   celadon: {
@@ -304,7 +304,7 @@ const themes = {
     uMidCore: new se(0.38, 0.8, 0.6),
     uMidEdge: new se(0.16, 0.48, 0.36),
     uRippleColor: new se(0.5, 0.9, 0.7),
-    uPeakColor: new se(1, 0.85, 0.4),
+    uPeakColor: new se(0.48, 0.9, 0.98),
     uGlowIntensity: 1.1,
   },
   amber: {
@@ -319,7 +319,7 @@ const themes = {
     uMidCore: new se(1, 0.68, 0.12),
     uMidEdge: new se(0.75, 0.42, 0.05),
     uRippleColor: new se(1, 0.72, 0.2),
-    uPeakColor: new se(0.3, 0.5, 1),
+    uPeakColor: new se(1, 0.38, 0.18),
     uGlowIntensity: 1.35,
   },
   "aurora-green": {
@@ -334,7 +334,7 @@ const themes = {
     uMidCore: new se(0.15, 1, 0.55),
     uMidEdge: new se(0.03, 0.62, 0.3),
     uRippleColor: new se(0.4, 1, 0.6),
-    uPeakColor: new se(1, 0.3, 0.8),
+    uPeakColor: new se(0.2, 0.92, 1),
     uGlowIntensity: 1.4,
   },
   scarlet: {
@@ -349,7 +349,7 @@ const themes = {
     uMidCore: new se(1, 0.3, 0.16),
     uMidEdge: new se(0.8, 0.12, 0.08),
     uRippleColor: new se(1, 0.35, 0.2),
-    uPeakColor: new se(1, 0.9, 0.2),
+    uPeakColor: new se(1, 0.76, 0.22),
     uGlowIntensity: 1.45,
   },
   "slate-blue": {
@@ -364,7 +364,7 @@ const themes = {
     uMidCore: new se(0.45, 0.58, 0.85),
     uMidEdge: new se(0.22, 0.32, 0.55),
     uRippleColor: new se(0.55, 0.65, 1),
-    uPeakColor: new se(1, 0.6, 0.3),
+    uPeakColor: new se(0.68, 0.58, 0.98),
     uGlowIntensity: 1,
   },
 };

@@ -1015,7 +1015,7 @@ const SkyShaderMaterial = createShaderMaterial(
     uBaseColor2: new se(0.015, 0.025, 0.07),
     uNebulaA: new se(0.35, 0.1, 0.9),
     uNebulaB: new se(0.65, 0.25, 1),
-    uPeakColor: new se(1, 0.55, 0.05),
+    uPeakColor: new se(1, 0.35, 0.9),
     uAudioResp: 0,
     uBassResp: 0,
     uGlow: 1,
@@ -1161,22 +1161,31 @@ const SkyShaderMaterial = createShaderMaterial(
       // 倾斜银河坐标系（使用 CPU 预计算旋转）
       vec3 rDir = vec3(uGalRot.x * dir.x + uGalRot.y * dir.z, dir.y, -uGalRot.y * dir.x + uGalRot.x * dir.z);
       float galPlane = rDir.y * 0.82 - rDir.x * 0.44 + rDir.z * 0.36;
-      float galBand = exp(-galPlane * galPlane * 7.5);
+      float galBand = exp(-galPlane * galPlane * 7.0);
 
-      float pulse = uAudioResp;
-      vec2 baseUv = vec2(rDir.x * 2.2 + rDir.z * 1.35, rDir.y * 2.6 - rDir.z * 0.75);
-      vec2 flow1 = vec2(uTime * 0.011 + pulse * 0.42, uTime * 0.007 + pulse * 0.28);
-      vec2 flow2 = vec2(-uTime * 0.009 - pulse * 0.32, uTime * 0.013 - pulse * 0.36);
+      // 沿银河主轴的顺流各向异性坐标（彻底消除 1-|noise| 闭合虫状线圈与节拍 UV 抖动）
+      float alongGal = rDir.x * 0.90 + rDir.z * 0.95;
+      vec2 baseUv = vec2(alongGal * 1.45, galPlane * 2.15 + rDir.y * 0.95);
+      vec2 flow1 = vec2(uTime * 0.012, uTime * 0.005);
+      vec2 flow2 = vec2(-uTime * 0.009, uTime * 0.007);
 
-      float warp = snoise(baseUv * 0.95 + flow1);
-      float nebMain = snoise(baseUv * 1.72 + vec2(warp * 0.42, -warp * 0.34) + flow2);
-      float nebFine = snoise(baseUv * 3.15 - vec2(warp * 0.24, warp * 0.22) + flow1 * 1.25);
-      float softVeil = smoothstep(0.10, 0.92, nebFine * 0.5 + 0.5) * smoothstep(-0.15, 0.78, nebMain + galBand * 0.42);
+      float warp = snoise(baseUv * 0.85 + flow1);
+      float nebMain = snoise(baseUv * 1.55 + vec2(warp * 0.36, -warp * 0.24) + flow2);
+      float nebFine = snoise(vec2(baseUv.x * 2.40, baseUv.y * 3.10) - vec2(warp * 0.22, warp * 0.16) + flow1 * 1.25);
 
-      float dustRift = smoothstep(0.05, 0.72, nebFine) * galBand;
-      float nebField = nebMain * 0.66 + nebFine * 0.34;
-      float nebDensity = smoothstep(-0.14, 0.98, nebField + galBand * 0.36) * smoothstep(localHorizon - 0.01, localHorizon + 0.22, dir.y);
-      nebDensity *= (1.0 - dustRift * 0.28);
+      float nebElevMask = smoothstep(localHorizon - 0.01, localHorizon + 0.20, dir.y);
+      // 底层柔雾云幕（大尺度平滑过渡）
+      float nebField = nebMain * 0.68 + nebFine * 0.32;
+      float nebDensity = smoothstep(-0.18, 0.96, nebField + galBand * 0.38) * nebElevMask;
+      float softVeil = smoothstep(0.08, 0.92, nebFine * 0.5 + 0.5) * smoothstep(-0.18, 0.78, nebMain + galBand * 0.42);
+
+      // 上层偏实丝带云层（连续 sweeping 弧带叠加，绝不出现封闭怪圈）
+      float ribbonWave1 = galPlane * 2.6 + warp * 0.42 + nebMain * 0.26;
+      float ribbonWave2 = (galPlane - 0.22) * 3.4 - warp * 0.34 + nebFine * 0.22;
+      float silkArc1 = exp(-ribbonWave1 * ribbonWave1 * 2.8) * smoothstep(-0.25, 0.65, nebMain + 0.22);
+      float silkArc2 = exp(-ribbonWave2 * ribbonWave2 * 4.2) * smoothstep(-0.15, 0.72, nebFine * 0.6 + nebMain * 0.4 + 0.18);
+      float crispBand = clamp(silkArc1 * 0.72 + silkArc2 * 0.55, 0.0, 1.0);
+      float crispCloud = smoothstep(0.16, 0.92, nebField + galBand * 0.34) * nebElevMask;
 
       vec3 deepVoid = uFogColor * 0.32 + themeMid * 0.018 * glowCap;
       vec3 horizonNight = mix(lowerBackdrop, uFogColor * 0.62 + themeMid * 0.082 * glowCap, 0.55);
@@ -1186,25 +1195,44 @@ const SkyShaderMaterial = createShaderMaterial(
       float ionKnot = smoothstep(0.35, 0.90, nebMain * 0.68 + nebFine * 0.45) * galBand;
       nebCol = mix(nebCol, mix(uNebulaB, uPeakColor, 0.35), ionKnot * 0.38);
 
-      vec3 col = mix(baseCol, nebCol * glowCap * 0.58, nebDensity * (0.58 + uAudioResp * 0.12));
-      col += mix(uNebulaB, uPeakColor, 0.22 * galBand) * softVeil * smoothstep(localHorizon + 0.01, localHorizon + 0.26, dir.y) * 0.14 * glowCap;
+      float nebAudio = 1.0 + uAudioResp * 0.26 + uBassResp * 0.14;
+      vec3 col = mix(baseCol, nebCol * glowCap * 0.58, nebDensity * min(0.88, 0.56 + uAudioResp * 0.16));
+      col = mix(col, nebCol * glowCap * 0.68, crispCloud * min(0.55, 0.24 + uAudioResp * 0.10));
+      vec3 veilTint = mix(uNebulaB, uPeakColor, 0.24 * galBand);
+      float veilElev = smoothstep(localHorizon + 0.01, localHorizon + 0.22, dir.y);
+      col += veilTint * (softVeil * 0.12 + crispBand * 0.20) * veilElev * glowCap * nebAudio;
 
-      // 北欧丝绸极光幕帘（柔和过渡，避免顶部出现硬边暗斑）
-      float aurMaskY = smoothstep(localHorizon - 0.015, localHorizon + 0.085, dir.y) * (1.0 - smoothstep(localHorizon + 0.14, localHorizon + 0.38, dir.y));
+      // 双层北欧极光幕帘：底层柔雾光晕 + 上层偏实流光幕帘（支持音频呼吸起伏与亮度响应）
+      float aurReach = 1.0 + clamp(uBassResp * 0.18 + uAudioResp * 0.14, 0.0, 0.42);
+      float aurTop = localHorizon + 0.36 * aurReach;
+      float aurMaskY = smoothstep(localHorizon - 0.015, localHorizon + 0.075, dir.y) * (1.0 - smoothstep(localHorizon + 0.14 * aurReach, aurTop, dir.y));
       if (aurMaskY > 0.001) {
         vec2 hDir = normalize(rDir.xz + vec2(1e-5, 0.0));
         vec2 hRot = vec2(uAurRot.x * hDir.x - uAurRot.y * hDir.y, uAurRot.y * hDir.x + uAurRot.x * hDir.y);
-        float ribbonA = snoise(hRot * 1.75 + vec2(0.0, dir.y * 1.35 - uTime * 0.02));
-        float ribbonB = snoise(hDir * 3.10 + vec2(ribbonA * 0.38, dir.y * 1.85 + uTime * 0.015));
-        float raysA = sin(dot(hRot, vec2(8.5, 5.5)) + ribbonA * 2.8 + uTime * 0.14);
-        float raysB = sin(dot(hRot, vec2(-5.5, 8.5)) - ribbonB * 2.4 - uTime * 0.10);
-        float rays = 0.66 + 0.34 * (raysA * 0.55 + raysB * 0.45);
-        float curtain = smoothstep(-0.04, 0.92, (ribbonA * 0.58 + ribbonB * 0.42) * 0.5 + 0.5) * rays;
-        float leDy = (dir.y - (localHorizon + 0.08)) / 0.058;
-        float lowerEdge = exp(-leDy * leDy);
-        float vertFade = pow(max(0.0, 1.0 - smoothstep(localHorizon + 0.07, localHorizon + 0.37, dir.y)), 1.45);
-        vec3 aurCol = mix(uNebulaA * 1.10, mix(uNebulaB, uPeakColor, 0.25), smoothstep(localHorizon + 0.05, localHorizon + 0.28, dir.y));
-        col += aurCol * (curtain * vertFade * 0.24 + lowerEdge * curtain * 0.15) * aurMaskY * glowCap * (1.0 + uAudioResp * 0.38 + uBassResp * 0.22);
+        // 底层柔和极光幕
+        float ribbonA = snoise(hRot * 1.65 + vec2(0.0, dir.y * 1.10 - uTime * 0.018));
+        float ribbonB = snoise(hRot * 2.85 + vec2(ribbonA * 0.32, dir.y * 1.45 + uTime * 0.014));
+        float raysSoft = 0.70 + 0.30 * sin(dot(hRot, vec2(7.5, 5.0)) + ribbonA * 2.2 + uTime * 0.12);
+        float curtainSoft = smoothstep(-0.06, 0.90, (ribbonA * 0.60 + ribbonB * 0.40) * 0.5 + 0.5) * raysSoft;
+        float leDySoft = (dir.y - (localHorizon + 0.08 * aurReach)) / (0.062 * aurReach);
+        float lowerEdgeSoft = exp(-leDySoft * leDySoft);
+        float vertFade = pow(max(0.0, 1.0 - smoothstep(localHorizon + 0.065, aurTop, dir.y)), 1.45);
+
+        // 上层偏实极光光丝（沿波浪下缘亮起并向上自然消散，无团块与怪圈）
+        float waveHeight = localHorizon + (0.075 + 0.038 * ribbonA + 0.018 * ribbonB) * aurReach;
+        float bandDy = (dir.y - waveHeight) / (0.044 * aurReach);
+        float crispBandMask = exp(-bandDy * bandDy) * smoothstep(waveHeight - 0.035, waveHeight + 0.015, dir.y);
+        float raysCrisp = 0.62 + 0.38 * (
+          sin(dot(hRot, vec2(11.0, 7.0)) + ribbonA * 3.4 + uTime * 0.16) * 0.60 +
+          sin(dot(hRot, vec2(-6.5, 10.5)) - ribbonB * 2.8 - uTime * 0.11) * 0.40
+        );
+        float curtainCrisp = smoothstep(0.05, 0.85, ribbonA * 0.55 + ribbonB * 0.45 + 0.35) * raysCrisp;
+
+        vec3 aurCol = mix(uNebulaA * 1.12, mix(uNebulaB, uPeakColor, 0.26), smoothstep(localHorizon + 0.05, localHorizon + 0.28 * aurReach, dir.y));
+        float aurGain = 1.0 + uAudioResp * 0.52 + uBassResp * 0.36;
+        float aurSoftTerm = curtainSoft * vertFade * 0.22 + lowerEdgeSoft * curtainSoft * 0.12;
+        float aurCrispTerm = curtainCrisp * vertFade * 0.15 + crispBandMask * (0.45 + 0.55 * raysCrisp) * 0.22;
+        col += aurCol * (aurSoftTerm + aurCrispTerm) * aurMaskY * glowCap * aurGain;
       }
 
       // 3 层独立视差锐利星空 + 银河星尘

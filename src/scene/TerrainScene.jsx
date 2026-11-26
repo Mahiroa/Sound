@@ -227,6 +227,7 @@ const TerrainSceneInner = le.forwardRef(
       centerBoost: cb = 0.2,
       randomSpikeIntensity: rsi = 0.3,
       waveFlowIntensity: wfi = 1,
+      auroraAudioIntensity: aai = 1,
       cameraAngleX: o = 45,
       cameraAngleY: c = 30,
       autoRotateEnabled: h = !1,
@@ -1734,9 +1735,10 @@ const TerrainSceneInner = le.forwardRef(
           su.uPeakColor.value.copy(qe.uPeakColor);
           su.uGlow.value = qe.uGlowIntensity;
         }
+        const auroraScale = Math.max(0, Math.min(2.5, aai));
         su.uAudioResp.value =
-          Math.min(1, nt.air * 0.45 + nt.treble * 0.45 + nt.energy * 0.25) * 0.38;
-        su.uBassResp.value = Math.min(1, nt.subBass * 0.6 + nt.bass * 0.5);
+          Math.min(1, nt.air * 0.45 + nt.treble * 0.45 + nt.energy * 0.25) * 0.42 * auroraScale;
+        su.uBassResp.value = Math.min(1, nt.subBass * 0.6 + nt.bass * 0.5) * auroraScale;
       }
 
       // 7. 特效材质与紧凑实例矩阵更新（流星/火花/冲击波均取主题主体色 uCoolCore/uWarmCore/uRippleColor）

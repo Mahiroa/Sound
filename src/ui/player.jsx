@@ -572,7 +572,7 @@ const MediaPlayerCard = le.memo(function MediaPlayerCard({
                             Dt.jsx("span", {
                               className: "sw-eq-bar",
                               style: {
-                                backgroundColor: "var(--sw-peak, #f59e0b)",
+                                backgroundColor: "var(--sw-peak, #ff59e6)",
                                 animationDelay: "0.24s",
                               },
                             }),
@@ -605,7 +605,7 @@ const MediaPlayerCard = le.memo(function MediaPlayerCard({
                               transformOrigin: "left center",
                               transform: `scaleX(${initialRatio})`,
                               background:
-                                "linear-gradient(90deg, color-mix(in srgb, var(--sw-accent, #7c3aed) 80%, transparent), var(--sw-accent, #7c3aed), var(--sw-peak, #f59e0b))",
+                                "linear-gradient(90deg, color-mix(in srgb, var(--sw-accent, #7c3aed) 80%, transparent), var(--sw-accent, #7c3aed), var(--sw-peak, #ff59e6))",
                               boxShadow:
                                 "0 0 10px color-mix(in srgb, var(--sw-accent, #7c3aed) 35%, transparent)",
                               transition: "transform 250ms linear",
@@ -623,7 +623,7 @@ const MediaPlayerCard = le.memo(function MediaPlayerCard({
                               borderRadius: "999px",
                               backgroundColor: "#ffffff",
                               boxShadow:
-                                "0 0 8px var(--sw-accent, #7c3aed), 0 0 14px color-mix(in srgb, var(--sw-peak, #f59e0b) 45%, transparent)",
+                                "0 0 8px var(--sw-accent, #7c3aed), 0 0 14px color-mix(in srgb, var(--sw-peak, #ff59e6) 45%, transparent)",
                               transition: "left 250ms linear",
                             },
                           }),
@@ -677,6 +677,7 @@ function RootApp() {
     centerBoost,
     randomSpikeIntensity,
     waveFlowIntensity,
+    auroraAudioIntensity,
     gridSize,
     meteorClickEnabled,
     peakColorEnabled,
@@ -779,6 +780,7 @@ function RootApp() {
               centerBoost,
               randomSpikeIntensity,
               waveFlowIntensity,
+              auroraAudioIntensity,
               gridSize,
               idleWaveEnabled,
               cameraDistance,

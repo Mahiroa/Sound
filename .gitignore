@@ -1,0 +1,20 @@
+# 依赖与构建产物
+node_modules/
+dist/
+.vite/
+.cache/
+
+# 调试与本地备份产物
+debug/
+.playwright-cli/
+.workbuddy/
+
+# 环境变量与编辑器配置
+.env*
+.vscode/
+.idea/
+
+# 系统与日志
+.DS_Store
+Thumbs.db
+*.log

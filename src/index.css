@@ -1,0 +1,63 @@
+@import "tailwindcss";
+
+@keyframes sw-colon-breathe {
+  0%, 100% {
+    opacity: 0.92;
+  }
+  50% {
+    opacity: 0.36;
+  }
+}
+
+@keyframes sw-eq-bar {
+  0%, 100% {
+    transform: scaleY(0.28);
+  }
+  50% {
+    transform: scaleY(1);
+  }
+}
+
+@keyframes sw-cover-enter {
+  0% {
+    opacity: 0;
+    transform: scale(0.92);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes sw-text-enter {
+  0% {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.sw-colon {
+  display: inline-block;
+  margin: 0 0.04em;
+  animation: sw-colon-breathe 2s ease-in-out infinite;
+}
+
+.sw-eq-bar {
+  width: 2px;
+  height: 10px;
+  border-radius: 999px;
+  transform-origin: bottom center;
+  animation: sw-eq-bar 0.9s ease-in-out infinite;
+}
+
+.sw-cover-enter {
+  animation: sw-cover-enter 0.85s cubic-bezier(0.4, 0, 0.2, 1) 0.1s both;
+}
+
+.sw-text-enter {
+  animation: sw-text-enter 0.85s cubic-bezier(0.4, 0, 0.2, 1) both;
+}

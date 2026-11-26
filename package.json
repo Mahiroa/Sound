@@ -1,0 +1,42 @@
+{
+  "name": "sonic-topography-wallpaper",
+  "private": true,
+  "version": "2.0.0",
+  "type": "module",
+  "description": "音域回响 · Sonic Topography — Wallpaper Engine 3D 音频可视化壁纸",
+  "author": "Mahiroa",
+  "license": "GPL-3.0-only",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Mahiroa/Sound.git"
+  },
+  "homepage": "https://github.com/Mahiroa/Sound#readme",
+  "bugs": {
+    "url": "https://github.com/Mahiroa/Sound/issues"
+  },
+  "keywords": [
+    "wallpaper-engine",
+    "audio-visualizer",
+    "music-visualizer",
+    "threejs",
+    "react-three-fiber",
+    "glsl",
+    "webgl"
+  ],
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "deploy:we": "node scripts/deploy-we.mjs"
+  },
+  "dependencies": {
+    "@react-three/fiber": "^9.6.1",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "three": "^0.178.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.1.0",
+    "tailwindcss": "^4.1.0",
+    "vite": "^6.0.0"
+  }
+}

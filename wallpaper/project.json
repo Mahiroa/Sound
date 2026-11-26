@@ -1,0 +1,712 @@
+{
+  "audio": {
+    "enabled": true
+  },
+  "contentrating": "Everyone",
+  "description": "音域回响 · Sonic Topography — 基于 Three.js 与自定义 GLSL 着色器的 Wallpaper Engine 3D 音频可视化壁纸，支持实时频谱地形、双谐波波纹、流星余烬、星空穹顶、20 套配色主题与毛玻璃时钟。\n\n3D audio-reactive topography wallpaper for Wallpaper Engine powered by Three.js and custom GLSL shaders.",
+  "file": "index.html",
+  "general": {
+    "properties": {
+      "audioIntensity": {
+        "index": 12,
+        "max": 2.5,
+        "min": 0.3,
+        "order": 112,
+        "step": 0.1,
+        "text": "音频响应强度 / Audio Intensity",
+        "type": "slider",
+        "value": 1
+      },
+      "autoRotateEnabled": {
+        "index": 35,
+        "order": 135,
+        "text": "自动旋转 / Auto Rotate",
+        "type": "bool",
+        "value": false
+      },
+      "autoRotateSpeed": {
+        "index": 36,
+        "max": 60,
+        "min": 1,
+        "order": 136,
+        "step": 1,
+        "text": "旋转速度 / Rotate Speed",
+        "type": "slider",
+        "value": 10
+      },
+      "cameraAngleX": {
+        "index": 33,
+        "max": 360,
+        "min": 0,
+        "order": 133,
+        "step": 5,
+        "text": "水平角度 / Horizontal Angle",
+        "type": "slider",
+        "value": 120
+      },
+      "cameraAngleY": {
+        "index": 34,
+        "max": 70,
+        "min": 10,
+        "order": 134,
+        "step": 5,
+        "text": "垂直仰角 / Vertical Angle",
+        "type": "slider",
+        "value": 25
+      },
+      "cameraDistance": {
+        "index": 32,
+        "max": 100,
+        "min": 20,
+        "order": 132,
+        "step": 5,
+        "text": "视角距离 / Camera Distance",
+        "type": "slider",
+        "value": 85
+      },
+      "clockColor": {
+        "index": 49,
+        "order": 149,
+        "text": "时钟颜色 / Clock Color",
+        "type": "color",
+        "value": "1 1 1"
+      },
+      "clockDateStyle": {
+        "index": 52,
+        "options": [
+          {
+            "label": "2026-08-11 / ISO",
+            "value": "iso"
+          },
+          {
+            "label": "2026年08月11日 / 中文",
+            "value": "cn"
+          },
+          {
+            "label": "08-11 / Short",
+            "value": "short"
+          }
+        ],
+        "order": 152,
+        "text": "日期格式 / Date Style",
+        "type": "combo",
+        "value": "iso"
+      },
+      "clockEnabled": {
+        "index": 46,
+        "order": 146,
+        "text": "显示时钟 / Show Clock",
+        "type": "bool",
+        "value": true
+      },
+      "clockFont": {
+        "index": 47,
+        "options": [
+          {
+            "label": "系统默认 / System UI",
+            "value": "system-ui"
+          },
+          {
+            "label": "Segoe UI",
+            "value": "Segoe UI"
+          },
+          {
+            "label": "Arial",
+            "value": "Arial"
+          },
+          {
+            "label": "Helvetica",
+            "value": "Helvetica"
+          },
+          {
+            "label": "Times New Roman",
+            "value": "Times New Roman"
+          },
+          {
+            "label": "Georgia",
+            "value": "Georgia"
+          },
+          {
+            "label": "Verdana",
+            "value": "Verdana"
+          },
+          {
+            "label": "Tahoma",
+            "value": "Tahoma"
+          },
+          {
+            "label": "Consolas",
+            "value": "Consolas"
+          },
+          {
+            "label": "Courier New",
+            "value": "Courier New"
+          },
+          {
+            "label": "Impact",
+            "value": "Impact"
+          },
+          {
+            "label": "Trebuchet MS",
+            "value": "Trebuchet MS"
+          },
+          {
+            "label": "Microsoft YaHei (微软雅黑)",
+            "value": "Microsoft YaHei"
+          },
+          {
+            "label": "SimSun (宋体)",
+            "value": "SimSun"
+          },
+          {
+            "label": "SimHei (黑体)",
+            "value": "SimHei"
+          },
+          {
+            "label": "PingFang SC (苹方)",
+            "value": "PingFang SC"
+          },
+          {
+            "label": "sans-serif",
+            "value": "sans-serif"
+          },
+          {
+            "label": "serif",
+            "value": "serif"
+          },
+          {
+            "label": "monospace",
+            "value": "monospace"
+          }
+        ],
+        "order": 147,
+        "text": "时钟字体 / Clock Font",
+        "type": "combo",
+        "value": "system-ui"
+      },
+      "clockGlassEnabled": {
+        "index": 53,
+        "order": 153,
+        "text": "毛玻璃背景 / Glass Effect",
+        "type": "bool",
+        "value": true
+      },
+      "clockGlassStrength": {
+        "index": 54,
+        "max": 30,
+        "min": 0,
+        "order": 154,
+        "step": 1,
+        "text": "模糊强度 / Blur Strength",
+        "type": "slider",
+        "value": 12
+      },
+      "clockOpacity": {
+        "index": 50,
+        "max": 1,
+        "min": 0.1,
+        "order": 150,
+        "step": 0.05,
+        "text": "时钟透明度 / Clock Opacity",
+        "type": "slider",
+        "value": 0.9
+      },
+      "clockShowSeconds": {
+        "index": 51,
+        "order": 151,
+        "text": "显示秒 / Show Seconds",
+        "type": "bool",
+        "value": false
+      },
+      "clockSize": {
+        "index": 48,
+        "max": 80,
+        "min": 16,
+        "order": 148,
+        "step": 1,
+        "text": "时钟字号 / Clock Size",
+        "type": "slider",
+        "value": 60
+      },
+      "clockY": {
+        "index": 55,
+        "max": 40,
+        "min": 2,
+        "order": 155,
+        "step": 1,
+        "text": "垂直位置(%) / Clock Y (%)",
+        "type": "slider",
+        "value": 18
+      },
+      "controllerSize": {
+        "index": 41,
+        "options": [
+          {
+            "label": "小 / Small",
+            "value": "small"
+          },
+          {
+            "label": "中 / Medium",
+            "value": "medium"
+          },
+          {
+            "label": "大 / Large",
+            "value": "large"
+          }
+        ],
+        "order": 141,
+        "text": "控制器尺寸 / Controller Size",
+        "type": "combo",
+        "value": "large"
+      },
+      "controllerX": {
+        "index": 42,
+        "max": 80,
+        "min": 0,
+        "order": 142,
+        "step": 1,
+        "text": "控制器水平位置 (%) / Controller X (%)",
+        "type": "slider",
+        "value": 2
+      },
+      "controllerY": {
+        "index": 43,
+        "max": 90,
+        "min": 0,
+        "order": 143,
+        "step": 1,
+        "text": "控制器垂直位置 (%) / Controller Y (%)",
+        "type": "slider",
+        "value": 3
+      },
+      "coverMix": {
+        "index": 56,
+        "max": 1,
+        "min": 0,
+        "order": 156,
+        "step": 0.05,
+        "text": "封面主色混合 / Cover Color Mix",
+        "type": "slider",
+        "value": 0
+      },
+      "gridSize": {
+        "index": 2,
+        "options": [
+          {
+            "label": "120x120",
+            "value": 120
+          },
+          {
+            "label": "160x160",
+            "value": 160
+          },
+          {
+            "label": "320x320",
+            "value": 320
+          },
+          {
+            "label": "640x640",
+            "value": 640
+          },
+          {
+            "label": "1080x1080",
+            "value": 1080
+          }
+        ],
+        "order": 102,
+        "text": "渲染精度 / Render Resolution",
+        "type": "combo",
+        "value": 120
+      },
+      "idleWaveDebounce": {
+        "index": 28,
+        "max": 5,
+        "min": 0.5,
+        "order": 128,
+        "step": 0.5,
+        "text": "空闲波浪防抖 (秒) / Idle Debounce (s)",
+        "type": "slider",
+        "value": 1
+      },
+      "idleWaveEnabled": {
+        "index": 27,
+        "order": 127,
+        "text": "空闲波浪 / Idle Wave",
+        "type": "bool",
+        "value": true
+      },
+      "idleWaveFadeDuration": {
+        "index": 29,
+        "max": 5,
+        "min": 0.5,
+        "order": 129,
+        "step": 0.5,
+        "text": "空闲波浪过渡 (秒) / Idle Fade (s)",
+        "type": "slider",
+        "value": 1
+      },
+      "lowPillarDim": {
+        "fraction": true,
+        "index": 9,
+        "max": 1,
+        "min": 0,
+        "order": 109,
+        "precision": 2,
+        "step": 0.05,
+        "text": "低柱压暗强度 / Low Pillar Dim",
+        "type": "slider",
+        "value": 0.35
+      },
+      "meteorClickEnabled": {
+        "index": 24,
+        "order": 124,
+        "text": "点击触发流星 / Click Meteor",
+        "type": "bool",
+        "value": true
+      },
+      "meteorCooldown": {
+        "index": 23,
+        "max": 400,
+        "min": 0,
+        "order": 123,
+        "step": 10,
+        "text": "流星冷却 (帧) / Meteor Cooldown (frames)",
+        "type": "slider",
+        "value": 60
+      },
+      "meteorEnabled": {
+        "index": 21,
+        "order": 121,
+        "text": "启用流星 / Enable Meteor",
+        "type": "bool",
+        "value": true
+      },
+      "meteorSensitivity": {
+        "index": 22,
+        "max": 0.8,
+        "min": 0.1,
+        "order": 122,
+        "step": 0.05,
+        "text": "流星灵敏度 / Meteor Sensitivity",
+        "type": "slider",
+        "value": 0.35
+      },
+      "peakColorEnabled": {
+        "index": 7,
+        "order": 107,
+        "text": "启用强调色 / Peak Color",
+        "type": "bool",
+        "value": true
+      },
+      "peakColorIntensity": {
+        "index": 8,
+        "max": 2,
+        "min": 0,
+        "order": 108,
+        "step": 0.1,
+        "text": "强调色强度 / Peak Color Intensity",
+        "type": "slider",
+        "value": 1
+      },
+      "pulseCooldown": {
+        "index": 18,
+        "max": 200,
+        "min": 0,
+        "order": 118,
+        "step": 5,
+        "text": "波纹冷却 (帧) / Ripple Cooldown (frames)",
+        "type": "slider",
+        "value": 20
+      },
+      "pulseEnabled": {
+        "index": 16,
+        "order": 116,
+        "text": "启用波纹 / Enable Ripple",
+        "type": "bool",
+        "value": true
+      },
+      "pulseSensitivity": {
+        "index": 17,
+        "max": 0.5,
+        "min": 0.05,
+        "order": 117,
+        "step": 0.01,
+        "text": "波纹灵敏度 / Ripple Sensitivity",
+        "type": "slider",
+        "value": 0.2
+      },
+      "responseRange": {
+        "index": 13,
+        "max": 2,
+        "min": 0.3,
+        "order": 113,
+        "step": 0.1,
+        "text": "响应范围 / Response Range",
+        "type": "slider",
+        "value": 1.3
+      },
+      "schemecolor": {
+        "order": 0,
+        "text": "ui_browse_properties_scheme_color",
+        "type": "color",
+        "value": "0.3333333333333333 0.0196078431372549 0.3333333333333333"
+      },
+      "sep_appearance": {
+        "index": 3,
+        "order": 103,
+        "text": " ",
+        "type": "text",
+        "value": ""
+      },
+      "sep_appearance_title": {
+        "index": 4,
+        "order": 104,
+        "text": "===外观 / Appearance===",
+        "type": "text",
+        "value": ""
+      },
+      "sep_audio": {
+        "index": 10,
+        "order": 110,
+        "text": " ",
+        "type": "text",
+        "value": ""
+      },
+      "sep_audio_title": {
+        "index": 11,
+        "order": 111,
+        "text": "===音频响应 / Audio Response===",
+        "type": "text",
+        "value": ""
+      },
+      "sep_camera": {
+        "index": 30,
+        "order": 130,
+        "text": " ",
+        "type": "text",
+        "value": ""
+      },
+      "sep_camera_title": {
+        "index": 31,
+        "order": 131,
+        "text": "===视角 / Camera===",
+        "type": "text",
+        "value": ""
+      },
+      "sep_clock": {
+        "index": 44,
+        "order": 144,
+        "text": " ",
+        "type": "text",
+        "value": ""
+      },
+      "sep_clock_title": {
+        "index": 45,
+        "order": 145,
+        "text": "===时钟 / Clock===",
+        "type": "text",
+        "value": ""
+      },
+      "sep_idle": {
+        "index": 25,
+        "order": 125,
+        "text": " ",
+        "type": "text",
+        "value": ""
+      },
+      "sep_idle_title": {
+        "index": 26,
+        "order": 126,
+        "text": "===效果-空闲波浪 / Effect-Idle Wave===",
+        "type": "text",
+        "value": ""
+      },
+      "sep_meteor": {
+        "index": 19,
+        "order": 119,
+        "text": " ",
+        "type": "text",
+        "value": ""
+      },
+      "sep_meteor_title": {
+        "index": 20,
+        "order": 120,
+        "text": "===效果-流星 / Effect-Meteor===",
+        "type": "text",
+        "value": ""
+      },
+      "sep_player": {
+        "index": 37,
+        "order": 137,
+        "text": " ",
+        "type": "text",
+        "value": ""
+      },
+      "sep_player_title": {
+        "index": 38,
+        "order": 138,
+        "text": "===播放器 / Player===",
+        "type": "text",
+        "value": ""
+      },
+      "sep_render": {
+        "index": 0,
+        "order": 100,
+        "text": " ",
+        "type": "text",
+        "value": ""
+      },
+      "sep_render_title": {
+        "index": 1,
+        "order": 101,
+        "text": "===渲染 / Render===",
+        "type": "text",
+        "value": ""
+      },
+      "sep_ripple": {
+        "index": 14,
+        "order": 114,
+        "text": " ",
+        "type": "text",
+        "value": ""
+      },
+      "sep_ripple_title": {
+        "index": 15,
+        "order": 115,
+        "text": "===效果-波纹 / Effect-Ripple===",
+        "type": "text",
+        "value": ""
+      },
+      "showAlbumCover": {
+        "index": 40,
+        "order": 140,
+        "text": "显示专辑封面 / Show Album Cover",
+        "type": "bool",
+        "value": true
+      },
+      "showPlayerController": {
+        "index": 39,
+        "order": 139,
+        "text": "显示播放器控制器 / Show Player",
+        "type": "bool",
+        "value": true
+      },
+      "theme": {
+        "index": 5,
+        "options": [
+          {
+            "label": "随机 / Random",
+            "value": "random"
+          },
+          {
+            "label": "霁紫 / Violet",
+            "value": "nocturnal"
+          },
+          {
+            "label": "沧蓝 / Deep Blue",
+            "value": "ocean-deep"
+          },
+          {
+            "label": "冰蓝 / Ice Blue",
+            "value": "arctic-aurora"
+          },
+          {
+            "label": "碧翠 / Emerald",
+            "value": "cyber-forest"
+          },
+          {
+            "label": "流金 / Gold",
+            "value": "golden-hour"
+          },
+          {
+            "label": "余烬 / Ember",
+            "value": "ember-fire"
+          },
+          {
+            "label": "赤焰 / Crimson",
+            "value": "crimson-sunset"
+          },
+          {
+            "label": "霞粉 / Coral",
+            "value": "coral-mirage"
+          },
+          {
+            "label": "幻紫 / Neon",
+            "value": "neon-tokyo"
+          },
+          {
+            "label": "水墨 / Ink",
+            "value": "minimal-monochrome"
+          },
+          {
+            "label": "幽青 / Teal",
+            "value": "teal-depth"
+          },
+          {
+            "label": "薰衣草 / Lavender",
+            "value": "lavender-dream"
+          },
+          {
+            "label": "樱 / Cherry Blossom",
+            "value": "cherry-blossom"
+          },
+          {
+            "label": "锻铜 / Copper",
+            "value": "copper-forge"
+          },
+          {
+            "label": "薄荷 / Mint",
+            "value": "mint-fresh"
+          },
+          {
+            "label": "青瓷 / Celadon",
+            "value": "celadon"
+          },
+          {
+            "label": "琥珀 / Amber",
+            "value": "amber"
+          },
+          {
+            "label": "极光绿 / Aurora Green",
+            "value": "aurora-green"
+          },
+          {
+            "label": "绯红 / Scarlet",
+            "value": "scarlet"
+          },
+          {
+            "label": "灰蓝 / Slate Blue",
+            "value": "slate-blue"
+          }
+        ],
+        "order": 105,
+        "text": "颜色主题 / Color Theme",
+        "type": "combo",
+        "value": "random"
+      },
+      "themeCycleInterval": {
+        "index": 6,
+        "max": 300,
+        "min": 10,
+        "order": 106,
+        "step": 10,
+        "text": "轮询间隔 (秒) / Cycle Interval (s)",
+        "type": "slider",
+        "value": 60
+      }
+    },
+    "supportsaudioprocessing": true
+  },
+  "name": "Sound",
+  "preview": "preview.jpg",
+  "ratingsex": "none",
+  "ratingviolence": "none",
+  "snapshotformat": -1,
+  "snapshotoverlay": "",
+  "tags": [
+    "Sci-Fi"
+  ],
+  "title": "音域回响",
+  "type": "web",
+  "version": 2
+}

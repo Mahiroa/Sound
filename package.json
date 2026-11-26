@@ -1,7 +1,7 @@
 {
   "name": "sonic-topography-wallpaper",
   "private": true,
-  "version": "1.0.0",
+  "version": "1.1.0",
   "type": "module",
   "description": "音域回响 · Sonic Topography — Wallpaper Engine 3D 音频可视化壁纸",
   "author": "Mahiroa",

@@ -80,7 +80,7 @@ const GLSL_FILMIC = `
     vec3 mapped = (x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14);
     float luma = dot(x, vec3(0.2126, 0.7152, 0.0722));
     vec3 satKeep = x / (1.0 + luma * 0.48);
-    return clamp(mix(satKeep, mapped, 0.62), 0.0, 1.0);
+    return clamp(mix(satKeep, mapped, 0.42), 0.0, 1.0);
   }
   float ignDither(vec2 fragCoord) {
     return fract(52.9829189 * fract(dot(fragCoord, vec2(0.06711056, 0.00583715))));
@@ -162,6 +162,10 @@ const HeightfieldSimMaterial = createShaderMaterial(
     uIdleWave: 0,
     uAudioIntensity: 1,
     uResponseRange: 1,
+    uOutOfRangeIntensity: 0.4,
+    uCenterBoost: 0.2,
+    uRandomSpikeIntensity: 0.3,
+    uWaveFlowIntensity: 1,
     uSubBass: 0,
     uBass: 0,
     uLowMid: 0,
@@ -186,6 +190,10 @@ const HeightfieldSimMaterial = createShaderMaterial(
     uniform float uIdleWave;
     uniform float uAudioIntensity;
     uniform float uResponseRange;
+    uniform float uOutOfRangeIntensity;
+    uniform float uCenterBoost;
+    uniform float uRandomSpikeIntensity;
+    uniform float uWaveFlowIntensity;
 
     uniform float uSubBass;
     uniform float uBass;
@@ -233,9 +241,21 @@ const HeightfieldSimMaterial = createShaderMaterial(
       float riverNoise = st.b;
       float colorVar = st.a;
 
-      float range = uResponseRange;
+      float range = max(uResponseRange, 0.05);
       float falloffT = smoothstep(uHalfExtent * 0.32 * range, uHalfExtent * 0.90 * range, centerDist);
       float globalFalloff = mix(1.0, 0.76, falloffT);
+      // 非响应范围（超出 responseRange 外围区域）独立音频强度系数：拉开响应区与非响应区层次对比
+      float outRangeT = smoothstep(uHalfExtent * 0.45 * range, uHalfExtent * 0.85 * range, centerDist);
+      float audioRangeFalloff = mix(1.0, clamp(uOutOfRangeIntensity, 0.0, 2.0), outRangeT);
+      // 响应区域中心增强：在响应区内核 [0, 0.45 * range] 内按 -0.5~0.5 增益平滑叠加
+      float centerMask = smoothstep(uHalfExtent * 0.45 * range, 0.0, centerDist);
+      float centerGain = max(0.0, 1.0 + clamp(uCenterBoost, -0.5, 0.5) * centerMask);
+      // 音频随机起落幅值与外围孤立尖柱二次收敛（保持外围暗海沉稳整洁）
+      float spikeScale = clamp(uRandomSpikeIntensity, 0.0, 2.0);
+      float outerSpikeDamp = mix(1.0, 0.35, outRangeT);
+      float spikeWeight = spikeScale * outerSpikeDamp;
+      // 规律流河/波动（lowMid 全场涌浪 + mid 对角线波带）独立幅值控制
+      float waveScale = clamp(uWaveFlowIntensity, 0.0, 2.0);
       // 圆盘最外圈平滑收坡，避免地平线边缘出现突兀锯齿柱墙
       float outerSkirt = mix(0.28, 1.0, smoothstep(uHalfExtent, uHalfExtent * 0.80, centerDist));
 
@@ -273,43 +293,44 @@ const HeightfieldSimMaterial = createShaderMaterial(
           float bassInner = smoothstep(uHalfExtent * 0.06 * range, uHalfExtent * 0.20 * range, centerDist);
           float bassOuter = smoothstep(uHalfExtent * 0.46 * range, uHalfExtent * 0.16 * range, centerDist + bassNoise * 5.2);
           float bassRegion = mix(0.32, 1.0, bassInner) * bassOuter;
-          float bassRnd = smoothstep(0.0, 1.0, mix(rnd, 0.65, uSmoothness * 0.35) + uDensity * 0.45);
+          float bassRndRaw = smoothstep(0.0, 1.0, mix(rnd, 0.65, uSmoothness * 0.35) + uDensity * 0.45);
+          float bassRnd = mix(0.76, bassRndRaw, min(spikeScale, 1.0));
           bassLift = easeLift(uBass, 4.6) * bassRegion * bassRnd;
         }
-        if (uLowMid > 0.001) {
+        if (uLowMid > 0.001 && waveScale > 0.001) {
           float lowMidNoise = snoise(pos2D * 0.05 + vec2(uTime * 0.1, 0.0));
-          lowMidLift = flowLift(uLowMid, 2.7) * (lowMidNoise * 0.5 + 0.5);
+          lowMidLift = flowLift(uLowMid, 2.7) * (lowMidNoise * 0.5 + 0.5) * waveScale;
         }
-        if (uMid > 0.001) {
+        if (uMid > 0.001 && waveScale > 0.001) {
           float riverFlow = sin(pos2D.x * 0.19 + pos2D.y * 0.19 + riverNoise * 2.1 - uTime * 1.9);
           float midRing = smoothstep(uHalfExtent * 0.08 * range, uHalfExtent * 0.26 * range, centerDist)
                         * smoothstep(uHalfExtent * 0.92 * range, uHalfExtent * 0.56 * range, centerDist);
-          midLift = flowLift(uMid, 3.6) * smoothstep(-0.18, 0.18, riverFlow) * mix(0.42, 1.0, midRing);
+          midLift = flowLift(uMid, 3.6) * smoothstep(-0.18, 0.18, riverFlow) * mix(0.42, 1.0, midRing) * waveScale;
         }
-        if (uHighMid > 0.001 && fract(rnd * 13.3) > 0.74) {
+        if (uHighMid > 0.001 && spikeWeight > 0.001 && fract(rnd * 13.3) > 0.74) {
           float highMidRegion = smoothstep(uHalfExtent * 0.22 * range, uHalfExtent * 0.68 * range, centerDist);
           float hmRaw = easeLift(uHighMid, 3.4);
-          highMidLift = hmRaw * highMidRegion * (0.28 + 0.72 * fract(rnd * 7.7));
+          highMidLift = hmRaw * highMidRegion * (0.28 + 0.72 * fract(rnd * 7.7)) * spikeWeight;
         }
-        if (uTreble > 0.001) {
+        if (uTreble > 0.001 && spikeWeight > 0.001) {
           float trebleRegion = smoothstep(uHalfExtent * 0.40 * range, uHalfExtent * 0.78 * range, centerDist);
           float sparkle = sin(pos2D.x * 0.34 - pos2D.y * 0.29 + uTime * 3.8 + rnd * 6.283) * 0.5 + 0.5;
           float trebleGate = smoothstep(0.32, 0.95, fract(rnd * 19.7));
-          trebleLift = easeLift(uTreble, 3.0) * trebleRegion * mix(0.28, 1.0, sparkle) * (0.35 + 0.65 * trebleGate);
+          trebleLift = easeLift(uTreble, 3.0) * trebleRegion * mix(0.28, 1.0, sparkle) * (0.35 + 0.65 * trebleGate) * spikeWeight;
         }
 
         audioElevation = (subLift + bassLift + lowMidLift + midLift + highMidLift + trebleLift) * uAudioIntensity;
 
-        if (uEnergy > 0.001 && rnd > 0.986) {
+        if (uEnergy > 0.001 && spikeWeight > 0.001 && rnd > 0.986) {
           float energyRaw = clamp(uEnergy, 0.0, 1.0);
           float energyBounce = 1.0 - pow(1.0 - energyRaw, 1.5);
           energyBounce += sin(energyRaw * 6.283 * 2.0) * exp(-energyRaw * 5.0) * 0.2;
-          audioElevation += energyBounce * 4.8 * uAudioIntensity;
+          audioElevation += energyBounce * 4.8 * uAudioIntensity * spikeWeight;
         }
-        audioElevation *= globalFalloff * outerSkirt;
+        audioElevation *= audioRangeFalloff * centerGain * outerSkirt;
       }
 
-      float subPeak = clamp(subLift / 4.8, 0.0, 1.0);
+      float subPeak = clamp((subLift * centerGain) / 4.8, 0.0, 1.0);
       float globalPeak = clamp((audioElevation - 3.8) / 5.2, 0.0, 1.0);
       float peakIntensity = clamp(max(subPeak, globalPeak * 0.85), 0.0, 1.0);
 
@@ -389,6 +410,10 @@ const MapShaderMaterial = createShaderMaterial(
     uIdleWave: 0,
     uAudioIntensity: 1,
     uResponseRange: 1,
+    uOutOfRangeIntensity: 0.4,
+    uCenterBoost: 0.2,
+    uRandomSpikeIntensity: 0.3,
+    uWaveFlowIntensity: 1,
     uHalfExtent: 84,
     uActiveRipples: 0,
     uRippleGeo: Array.from({ length: 20 }, () => new V4(0, 0, 0, 0)),
@@ -419,6 +444,10 @@ const MapShaderMaterial = createShaderMaterial(
     uniform float uIdleWave;
     uniform float uAudioIntensity;
     uniform float uResponseRange;
+    uniform float uOutOfRangeIntensity;
+    uniform float uCenterBoost;
+    uniform float uRandomSpikeIntensity;
+    uniform float uWaveFlowIntensity;
     uniform float uHalfExtent;
 
     uniform float uSubBass;
@@ -497,9 +526,17 @@ const MapShaderMaterial = createShaderMaterial(
         float rnd = random(pos2D);
         colorVariation = sin(pos2D.x * 0.075 + pos2D.y * 0.058) * 0.5 + 0.5;
 
-        float range = uResponseRange;
+        float range = max(uResponseRange, 0.05);
         float falloffT = smoothstep(uHalfExtent * 0.32 * range, uHalfExtent * 0.90 * range, centerDist);
         float globalFalloff = mix(1.0, 0.76, falloffT);
+        float outRangeT = smoothstep(uHalfExtent * 0.45 * range, uHalfExtent * 0.85 * range, centerDist);
+        float audioRangeFalloff = mix(1.0, clamp(uOutOfRangeIntensity, 0.0, 2.0), outRangeT);
+        float centerMask = smoothstep(uHalfExtent * 0.45 * range, 0.0, centerDist);
+        float centerGain = max(0.0, 1.0 + clamp(uCenterBoost, -0.5, 0.5) * centerMask);
+        float spikeScale = clamp(uRandomSpikeIntensity, 0.0, 2.0);
+        float outerSpikeDamp = mix(1.0, 0.35, outRangeT);
+        float spikeWeight = spikeScale * outerSpikeDamp;
+        float waveScale = clamp(uWaveFlowIntensity, 0.0, 2.0);
         float outerSkirt = mix(0.28, 1.0, smoothstep(uHalfExtent, uHalfExtent * 0.80, centerDist));
 
         float idleElevation = 0.0;
@@ -522,31 +559,32 @@ const MapShaderMaterial = createShaderMaterial(
         float bassInner = smoothstep(uHalfExtent * 0.06 * range, uHalfExtent * 0.20 * range, centerDist);
         float bassOuter = smoothstep(uHalfExtent * 0.46 * range, uHalfExtent * 0.16 * range, centerDist + bassNoise * 5.2);
         float bassRegion = mix(0.32, 1.0, bassInner) * bassOuter;
-        float bassRnd = smoothstep(0.0, 1.0, mix(rnd, 0.65, uSmoothness * 0.35) + uDensity * 0.45);
+        float bassRndRaw = smoothstep(0.0, 1.0, mix(rnd, 0.65, uSmoothness * 0.35) + uDensity * 0.45);
+        float bassRnd = mix(0.76, bassRndRaw, min(spikeScale, 1.0));
         float bassLift = easeLift(uBass, 4.6) * bassRegion * bassRnd;
-        float lowMidNoise = uLowMid > 0.001 ? snoise(pos2D * 0.05 + vec2(uTime * 0.1, 0.0)) : 0.0;
-        float lowMidLift = flowLift(uLowMid, 2.7) * (lowMidNoise * 0.5 + 0.5);
-        float riverFlow = uMid > 0.001 ? sin(pos2D.x * 0.19 + pos2D.y * 0.19 + snoise(pos2D * 0.095) * 2.1 - uTime * 1.9) : 0.0;
+        float lowMidNoise = (uLowMid > 0.001 && waveScale > 0.001) ? snoise(pos2D * 0.05 + vec2(uTime * 0.1, 0.0)) : 0.0;
+        float lowMidLift = (uLowMid > 0.001 && waveScale > 0.001) ? flowLift(uLowMid, 2.7) * (lowMidNoise * 0.5 + 0.5) * waveScale : 0.0;
+        float riverFlow = (uMid > 0.001 && waveScale > 0.001) ? sin(pos2D.x * 0.19 + pos2D.y * 0.19 + snoise(pos2D * 0.095) * 2.1 - uTime * 1.9) : 0.0;
         float midRing = smoothstep(uHalfExtent * 0.08 * range, uHalfExtent * 0.26 * range, centerDist)
                       * smoothstep(uHalfExtent * 0.92 * range, uHalfExtent * 0.56 * range, centerDist);
-        float midLift = flowLift(uMid, 3.6) * smoothstep(-0.18, 0.18, riverFlow) * mix(0.42, 1.0, midRing);
+        float midLift = (uMid > 0.001 && waveScale > 0.001) ? flowLift(uMid, 3.6) * smoothstep(-0.18, 0.18, riverFlow) * mix(0.42, 1.0, midRing) * waveScale : 0.0;
         float highMidRegion = smoothstep(uHalfExtent * 0.22 * range, uHalfExtent * 0.68 * range, centerDist);
-        float highMidLift = (fract(rnd * 13.3) > 0.74) ? easeLift(uHighMid, 3.4) * highMidRegion * (0.28 + 0.72 * fract(rnd * 7.7)) : 0.0;
+        float highMidLift = (spikeWeight > 0.001 && fract(rnd * 13.3) > 0.74) ? easeLift(uHighMid, 3.4) * highMidRegion * (0.28 + 0.72 * fract(rnd * 7.7)) * spikeWeight : 0.0;
         float trebleRegion = smoothstep(uHalfExtent * 0.40 * range, uHalfExtent * 0.78 * range, centerDist);
         float trebleSparkle = sin(pos2D.x * 0.34 - pos2D.y * 0.29 + uTime * 3.8 + rnd * 6.283) * 0.5 + 0.5;
         float trebleGate = smoothstep(0.32, 0.95, fract(rnd * 19.7));
-        float trebleLift = uTreble > 0.001 ? easeLift(uTreble, 3.0) * trebleRegion * mix(0.28, 1.0, trebleSparkle) * (0.35 + 0.65 * trebleGate) : 0.0;
+        float trebleLift = (uTreble > 0.001 && spikeWeight > 0.001) ? easeLift(uTreble, 3.0) * trebleRegion * mix(0.28, 1.0, trebleSparkle) * (0.35 + 0.65 * trebleGate) * spikeWeight : 0.0;
 
         float audioElevation = (subLift + bassLift + lowMidLift + midLift + highMidLift + trebleLift) * uAudioIntensity;
-        if (rnd > 0.986) {
+        if (spikeWeight > 0.001 && rnd > 0.986) {
           float energyRaw = clamp(uEnergy, 0.0, 1.0);
           float energyBounce = 1.0 - pow(1.0 - energyRaw, 1.5);
           energyBounce += sin(energyRaw * 6.283 * 2.0) * exp(-energyRaw * 5.0) * 0.2;
-          audioElevation += energyBounce * 4.8 * uAudioIntensity;
+          audioElevation += energyBounce * 4.8 * uAudioIntensity * spikeWeight;
         }
-        audioElevation *= globalFalloff * outerSkirt;
+        audioElevation *= audioRangeFalloff * centerGain * outerSkirt;
 
-        float subPeak = clamp(subLift / 4.8, 0.0, 1.0);
+        float subPeak = clamp((subLift * centerGain) / 4.8, 0.0, 1.0);
         float globalPeak = clamp((audioElevation - 3.8) / 5.2, 0.0, 1.0);
         peakIntensity = clamp(max(subPeak, globalPeak * 0.85), 0.0, 1.0);
         elevation = idleElevation + audioElevation + idleBlockWave;
@@ -621,13 +659,14 @@ const MapShaderMaterial = createShaderMaterial(
       float whiteBlend = rippleAnim.y * rippleAnim.y;
       float crestBlend = rippleAnim.z * rippleAnim.z;
       float rippleLift = max(normalBlend, whiteBlend);
-      currentGlow = mix(currentGlow, uRippleColor * 1.25, normalBlend * 0.82);
-      currentGlow = mix(currentGlow, vec3(1.05, 1.08, 1.15), whiteBlend * 0.88);
+      currentGlow = mix(currentGlow, uRippleColor * 1.16, normalBlend * 0.78);
+      vec3 meteorTint = mix(uRippleColor * 1.24, vec3(0.94, 0.97, 1.04), 0.40);
+      currentGlow = mix(currentGlow, meteorTint, whiteBlend * 0.84);
 
       float tallGate = smoothstep(0.45, 0.78, peakIntensity);
       float peakBlend = pow(peakIntensity, 0.85) * tallGate * uPeakEnabled * uPeakIntensity;
       float peakClamped = clamp(peakBlend, 0.0, 1.0);
-      currentGlow = mix(currentGlow, uPeakColor * 1.25, peakClamped * 0.82);
+      currentGlow = mix(currentGlow, uPeakColor * 1.22, peakClamped * 0.80);
       vCurrentGlow = currentGlow;
 
       float lowHeightDim = mix(mix(1.0, 0.56, dim), 1.0, smoothstep(0.05, 0.48, normElevation));
@@ -638,11 +677,11 @@ const MapShaderMaterial = createShaderMaterial(
       vPillarA = vec4(normElevation, lowHeightDim, distFade, peakClamped);
       vPillarB = vec4(rippleLift, idleCrest, aerialFog, peakBlend);
 
-      // 逐柱恒定波纹叠加色（与壁纸主体色系保持一致）
-      vec3 meteorWaveCol = mix(uRippleColor * 1.35, mix(uWarmCore * 1.30, vec3(1.15, 1.20, 1.24), 0.56), crestBlend);
-      vRippleAdd = uRippleColor * normalBlend * 0.50
-                 + meteorWaveCol * whiteBlend * 0.76
-                 + mix(uRippleColor, vec3(1.0, 0.98, 0.94), 0.62) * crestBlend * (normalBlend * 0.55 + whiteBlend * 0.65);
+      // 逐柱恒定波纹叠加色（高光保留主题色相与立体切面层次，避免过曝泛白）
+      vec3 meteorWaveCol = mix(uRippleColor * 1.24, mix(uWarmCore * 1.22, vec3(1.02, 1.06, 1.12), 0.36), crestBlend);
+      vRippleAdd = uRippleColor * normalBlend * 0.36
+                 + meteorWaveCol * whiteBlend * 0.56
+                 + mix(uRippleColor * 1.15, vec3(0.96, 0.97, 1.0), 0.28) * crestBlend * (normalBlend * 0.40 + whiteBlend * 0.48);
 
       // 平面法向方向光照（每个面法向恒定，直接顶点计算）
       const vec3 Lkey = vec3(0.501577, 0.790948, 0.347246); // normalize(0.52, 0.82, 0.36)
@@ -750,10 +789,11 @@ const MapShaderMaterial = createShaderMaterial(
                           + deepGemTint * mix(0.048, 0.024, dim) * min(uGlowIntensity, 1.35);
         vec3 darkCrystalCap = mix(baseFloorCol, uBaseColor2 * mix(1.12, 0.88, dim) + deepGemTint * 0.075, smoothstep(0.0, 0.38, normElevation)) * lowHeightDim;
 
-        // 升起晶柱顶面：通透清亮，无中心光晕，微弱斜向透射渐变体现晶面厚度
-        vec3 topGlowCol = mix(vCurrentGlow, uPeakColor * 1.24, peakClamped * 0.45 + idleCrest * 0.22);
-        float lightGrad = 0.96 + 0.08 * dot(vUv - 0.5, vec2(0.75, 0.66));
-        vec3 crownCol = topGlowCol * (1.12 + 0.20 * energyBoost) * lightGrad;
+        // 升起晶柱顶面：通透清亮且高光保色，微弱斜向透射渐变体现晶面厚度
+        vec3 topGlowCol = mix(vCurrentGlow, uPeakColor * 1.20, peakClamped * 0.45 + idleCrest * 0.22);
+        topGlowCol = mix(topGlowCol, topGlowCol * 0.86 + luminousEdgeHue * 0.22, energyBoost * 0.32);
+        float lightGrad = 0.95 + 0.10 * dot(vUv - 0.5, vec2(0.75, 0.66));
+        vec3 crownCol = topGlowCol * (1.06 + 0.14 * energyBoost) * lightGrad;
         vec3 capBase = mix(darkCrystalCap, crownCol, topClamped);
 
         // 紧致玻璃镜面闪烁 + 同色系克制掠射菲涅尔
@@ -1128,43 +1168,43 @@ const SkyShaderMaterial = createShaderMaterial(
       vec2 flow1 = vec2(uTime * 0.011 + pulse * 0.42, uTime * 0.007 + pulse * 0.28);
       vec2 flow2 = vec2(-uTime * 0.009 - pulse * 0.32, uTime * 0.013 - pulse * 0.36);
 
-      float warp = snoise(baseUv * 1.15 + flow1);
-      float nebMain = snoise(baseUv * 2.05 + vec2(warp * 0.62, -warp * 0.48) + flow2);
-      float nebFine = snoise(baseUv * 4.60 - vec2(warp * 0.38, warp * 0.34) + flow1 * 1.35);
-      float filament = pow(clamp(1.0 - abs(nebFine), 0.0, 1.0), 2.4) * smoothstep(-0.1, 0.75, nebMain + galBand * 0.45);
+      float warp = snoise(baseUv * 0.95 + flow1);
+      float nebMain = snoise(baseUv * 1.72 + vec2(warp * 0.42, -warp * 0.34) + flow2);
+      float nebFine = snoise(baseUv * 3.15 - vec2(warp * 0.24, warp * 0.22) + flow1 * 1.25);
+      float softVeil = smoothstep(0.10, 0.92, nebFine * 0.5 + 0.5) * smoothstep(-0.15, 0.78, nebMain + galBand * 0.42);
 
-      float dustRift = smoothstep(-0.08, 0.52, nebFine) * galBand;
-      float nebField = nebMain * 0.58 + nebFine * 0.42;
-      float nebDensity = smoothstep(0.06, 0.96, nebField + galBand * 0.38) * smoothstep(localHorizon - 0.01, localHorizon + 0.20, dir.y);
-      nebDensity *= (1.0 - dustRift * 0.58);
+      float dustRift = smoothstep(0.05, 0.72, nebFine) * galBand;
+      float nebField = nebMain * 0.66 + nebFine * 0.34;
+      float nebDensity = smoothstep(-0.14, 0.98, nebField + galBand * 0.36) * smoothstep(localHorizon - 0.01, localHorizon + 0.22, dir.y);
+      nebDensity *= (1.0 - dustRift * 0.28);
 
       vec3 deepVoid = uFogColor * 0.32 + themeMid * 0.018 * glowCap;
       vec3 horizonNight = mix(lowerBackdrop, uFogColor * 0.62 + themeMid * 0.082 * glowCap, 0.55);
       vec3 baseCol = mix(lowerBackdrop, mix(horizonNight, deepVoid, smoothstep(0.06, 0.46, skyElev)), horizonBlend);
 
-      vec3 nebCol = mix(uNebulaA, uNebulaB, smoothstep(-0.25, 0.70, nebMain + 0.20));
-      float ionKnot = smoothstep(0.32, 0.86, nebMain * 0.65 + nebFine * 0.55) * galBand;
-      nebCol = mix(nebCol, mix(uNebulaB, uPeakColor, 0.40), ionKnot * 0.48);
+      vec3 nebCol = mix(uNebulaA, uNebulaB, smoothstep(-0.30, 0.75, nebMain + 0.20));
+      float ionKnot = smoothstep(0.35, 0.90, nebMain * 0.68 + nebFine * 0.45) * galBand;
+      nebCol = mix(nebCol, mix(uNebulaB, uPeakColor, 0.35), ionKnot * 0.38);
 
-      vec3 col = mix(baseCol, nebCol * glowCap * 0.66, nebDensity * (0.68 + uAudioResp * 0.14));
-      col += mix(uNebulaB, uPeakColor, 0.25 * galBand) * filament * smoothstep(localHorizon + 0.01, localHorizon + 0.24, dir.y) * 0.24 * glowCap;
+      vec3 col = mix(baseCol, nebCol * glowCap * 0.58, nebDensity * (0.58 + uAudioResp * 0.12));
+      col += mix(uNebulaB, uPeakColor, 0.22 * galBand) * softVeil * smoothstep(localHorizon + 0.01, localHorizon + 0.26, dir.y) * 0.14 * glowCap;
 
-      // 北欧丝绸极光幕帘（随曲率地平线平滑展开，使用 CPU 预计算旋转）
-      float aurMaskY = smoothstep(localHorizon - 0.015, localHorizon + 0.075, dir.y) * (1.0 - smoothstep(localHorizon + 0.13, localHorizon + 0.36, dir.y));
+      // 北欧丝绸极光幕帘（柔和过渡，避免顶部出现硬边暗斑）
+      float aurMaskY = smoothstep(localHorizon - 0.015, localHorizon + 0.085, dir.y) * (1.0 - smoothstep(localHorizon + 0.14, localHorizon + 0.38, dir.y));
       if (aurMaskY > 0.001) {
         vec2 hDir = normalize(rDir.xz + vec2(1e-5, 0.0));
         vec2 hRot = vec2(uAurRot.x * hDir.x - uAurRot.y * hDir.y, uAurRot.y * hDir.x + uAurRot.x * hDir.y);
-        float ribbonA = snoise(hRot * 2.1 + vec2(0.0, dir.y * 1.6 - uTime * 0.02));
-        float ribbonB = snoise(hDir * 4.2 + vec2(ribbonA * 0.65, dir.y * 2.2 + uTime * 0.015));
-        float raysA = sin(dot(hRot, vec2(11.0, 7.0)) + ribbonA * 4.8 + uTime * 0.16);
-        float raysB = sin(dot(hRot, vec2(-7.0, 11.0)) - ribbonB * 4.2 - uTime * 0.12);
-        float rays = 0.58 + 0.42 * (raysA * 0.55 + raysB * 0.45);
-        float curtain = smoothstep(0.08, 0.85, (ribbonA * 0.55 + ribbonB * 0.45) * 0.5 + 0.5) * rays;
-        float leDy = (dir.y - (localHorizon + 0.075)) / 0.048;
+        float ribbonA = snoise(hRot * 1.75 + vec2(0.0, dir.y * 1.35 - uTime * 0.02));
+        float ribbonB = snoise(hDir * 3.10 + vec2(ribbonA * 0.38, dir.y * 1.85 + uTime * 0.015));
+        float raysA = sin(dot(hRot, vec2(8.5, 5.5)) + ribbonA * 2.8 + uTime * 0.14);
+        float raysB = sin(dot(hRot, vec2(-5.5, 8.5)) - ribbonB * 2.4 - uTime * 0.10);
+        float rays = 0.66 + 0.34 * (raysA * 0.55 + raysB * 0.45);
+        float curtain = smoothstep(-0.04, 0.92, (ribbonA * 0.58 + ribbonB * 0.42) * 0.5 + 0.5) * rays;
+        float leDy = (dir.y - (localHorizon + 0.08)) / 0.058;
         float lowerEdge = exp(-leDy * leDy);
-        float vertFade = pow(max(0.0, 1.0 - smoothstep(localHorizon + 0.07, localHorizon + 0.35, dir.y)), 1.55);
-        vec3 aurCol = mix(uNebulaA * 1.15, mix(uNebulaB, uPeakColor, 0.28), smoothstep(localHorizon + 0.05, localHorizon + 0.28, dir.y));
-        col += aurCol * (curtain * vertFade * 0.28 + lowerEdge * curtain * 0.18) * aurMaskY * glowCap * (1.0 + uAudioResp * 0.45 + uBassResp * 0.25);
+        float vertFade = pow(max(0.0, 1.0 - smoothstep(localHorizon + 0.07, localHorizon + 0.37, dir.y)), 1.45);
+        vec3 aurCol = mix(uNebulaA * 1.10, mix(uNebulaB, uPeakColor, 0.25), smoothstep(localHorizon + 0.05, localHorizon + 0.28, dir.y));
+        col += aurCol * (curtain * vertFade * 0.24 + lowerEdge * curtain * 0.15) * aurMaskY * glowCap * (1.0 + uAudioResp * 0.38 + uBassResp * 0.22);
       }
 
       // 3 层独立视差锐利星空 + 银河星尘

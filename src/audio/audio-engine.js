@@ -43,7 +43,7 @@ class BeatTrigger {
       this.bandStart = 0;
       this.bandEnd = 5;
       this.sensitivity = 0.2;
-      this.cooldown = 0;
+      this.cooldown = 30;
       this.pulseStrength = 0.35;
       this.minRawEnergy = 0.035;
       this.minRawFlux = 0.009;
@@ -51,7 +51,7 @@ class BeatTrigger {
       // 立体声合并 64-bin 的中高频/瞬态泛音区 (b20..b46: 军鼓/镲片/钢琴与合成器高音)
       this.bandStart = 20;
       this.bandEnd = 46;
-      this.sensitivity = 0.5;
+      this.sensitivity = 0.2;
       this.cooldown = 60;
       this.pulseStrength = 0.55;
       this.minRawEnergy = 0.02;

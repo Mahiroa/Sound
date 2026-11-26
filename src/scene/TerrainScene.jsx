@@ -223,6 +223,10 @@ const TerrainSceneInner = le.forwardRef(
       idleWaveEnabled: t = !0,
       audioIntensity: n = 1,
       responseRange: r = 1,
+      outOfRangeIntensity: ori = 0.4,
+      centerBoost: cb = 0.2,
+      randomSpikeIntensity: rsi = 0.3,
+      waveFlowIntensity: wfi = 1,
       cameraAngleX: o = 45,
       cameraAngleY: c = 30,
       autoRotateEnabled: h = !1,
@@ -1376,9 +1380,16 @@ const TerrainSceneInner = le.forwardRef(
       // 1. 物理更新：流星 / 火花 / 冲击波（空闲跳过全部循环，屏幕外流星不生成不可见拖尾/爆裂粒子）
       const meteorsHad = mu.current > 0;
       if (meteorsHad) {
-        const subRadius = Math.max(1, W * 0.24 * r);
-        const bassCenter = W * 0.22 * r;
-        const bassSpan = Math.max(1, W * 0.24 * r);
+        const safeRange = Math.max(0.05, r);
+        const subRadius = Math.max(1, W * 0.24 * safeRange);
+        const bassCenter = W * 0.22 * safeRange;
+        const bassSpan = Math.max(1, W * 0.24 * safeRange);
+        const outStart = W * 0.45 * safeRange;
+        const outSpan = Math.max(1e-4, W * 0.40 * safeRange);
+        const outClamp = Math.max(0, Math.min(2, ori));
+        const centerRadius = Math.max(1e-4, W * 0.45 * safeRange);
+        const centerClamp = Math.max(-0.5, Math.min(0.5, cb));
+        const waveClamp = Math.max(0, Math.min(2, wfi));
         for (let k = 0; k < Q; k++) {
           const mt = ze.current[k];
           if (!mt.active) continue;
@@ -1390,9 +1401,19 @@ const TerrainSceneInner = le.forwardRef(
           const dist = Math.hypot(mt.x, mt.z);
           const subF = Math.max(0, 1 - dist / subRadius);
           const bassF = Math.max(0, 1 - Math.abs(dist - bassCenter) / bassSpan);
+          const outT = Math.max(0, Math.min(1, (dist - outStart) / outSpan));
+          const smoothOut = outT * outT * (3 - 2 * outT);
+          const outGain = 1 + (outClamp - 1) * smoothOut;
+          const cT = Math.max(0, Math.min(1, 1 - dist / centerRadius));
+          const smoothCenter = cT * cT * (3 - 2 * cT);
+          const centerGain = Math.max(0, 1 + centerClamp * smoothCenter);
           const estSurfaceY = Math.min(
             6.5,
-            0.5 + (nt.subBass * 4.2 * subF + nt.bass * 3.0 * bassF + nt.lowMid * 1.4) * n,
+            0.5 +
+              (nt.subBass * 4.2 * subF + nt.bass * 3.0 * bassF + nt.lowMid * 1.4 * waveClamp) *
+                n *
+                outGain *
+                centerGain,
           );
           if (mt.y <= estSurfaceY) {
             mt.active = !1;
@@ -1611,6 +1632,10 @@ const TerrainSceneInner = le.forwardRef(
           sm.uIdleWave = idleVal;
           sm.uAudioIntensity = n;
           sm.uResponseRange = r;
+          sm.uOutOfRangeIntensity = ori;
+          sm.uCenterBoost = cb;
+          sm.uRandomSpikeIntensity = rsi;
+          sm.uWaveFlowIntensity = wfi;
           sm.uSubBass = nt.subBass;
           sm.uBass = nt.bass;
           sm.uLowMid = nt.lowMid;
@@ -1645,6 +1670,10 @@ const TerrainSceneInner = le.forwardRef(
         qe.uDensity = nt.density;
         qe.uAudioIntensity = n;
         qe.uResponseRange = r;
+        qe.uOutOfRangeIntensity = ori;
+        qe.uCenterBoost = cb;
+        qe.uRandomSpikeIntensity = rsi;
+        qe.uWaveFlowIntensity = wfi;
       }
 
       // MapShaderMaterial 与 FloorDiscMaterial 共享色算 uniform 同步

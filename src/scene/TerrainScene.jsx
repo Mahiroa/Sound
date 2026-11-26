@@ -1,10 +1,10 @@
 // 模块: TerrainScene.jsx
 // 高性能 3D 场景组件：
-//   - 160×160 GPU 离屏高度场模拟 FBO（MRT count=2，每柱 1 次计算替代 20 顶点重复计算，ALU -95%）
-//   - 4×4 空间瓦片分块 + 真实视锥剔除 + 逐帧从近到远排序（大幅降低柱群自遮挡 Overdraw）
+//   - 离屏高度场模拟 FBO（MRT count=2 + 硬件 Scissor + 6 平面视锥丢弃，仅模拟屏幕可见柱子）
+//   - 4×4 空间瓦片 + 4×4 微块两级视锥剔除 + 边界逐柱紧凑打包（仅渲染屏幕内可见柱子，静止视角零上传）
 //   - 16B 紧凑实例属性 aInstPos（告别 64B mat4，VRAM 与顶点抓取带宽 -75%）
-//   - 全屏单三角形 Early-Z 天空（排在地形柱之后渲染，遮挡天空片元零执行）
-//   - 非活跃特效零绘制 + 主题插值零 GC 下沉 + 全生命周期显式 dispose()
+//   - 全屏单三角形 Early-Z 天空（排在地形柱之后渲染，纯俯视满屏覆盖时直接跳过绘制）
+//   - 波纹/流星/火花/冲击波全链路视锥剔除 + 可见区定向生成 + 非活跃零绘制 + 全生命周期显式 dispose()
 import * as le from "react";
 import * as Dt from "react/jsx-runtime";
 import { useThree as tL, useFrame as vH, extend as iL } from "@react-three/fiber";
@@ -16,6 +16,8 @@ import {
   CircleGeometry,
   Color as se,
   DoubleSide,
+  DynamicDrawUsage,
+  Frustum,
   HalfFloatType,
   InstancedBufferAttribute,
   InstancedBufferGeometry,
@@ -157,6 +159,59 @@ function colorDistSq(a, b) {
 
 const UP_VEC = new j(0, 1, 0);
 const TILES_DIM = 4;
+const SUB_DIM = 4;
+const SKY_CORNERS = [
+  new Xe(-1, -1),
+  new Xe(1, -1),
+  new Xe(-1, 1),
+  new Xe(1, 1),
+];
+
+// 三态 AABB 视锥分类：0 = 完全在外, 1 = 相交边界, 2 = 完全在内（零分配）
+function classifyBoxFrustum(planes, minX, minY, minZ, maxX, maxY, maxZ) {
+  let result = 2;
+  for (let k = 0; k < 6; k++) {
+    const pl = planes[k];
+    const nx = pl.normal.x;
+    const ny = pl.normal.y;
+    const nz = pl.normal.z;
+    const c = pl.constant;
+    const px = nx >= 0 ? maxX : minX;
+    const py = ny >= 0 ? maxY : minY;
+    const pz = nz >= 0 ? maxZ : minZ;
+    if (nx * px + ny * py + nz * pz + c < 0) return 0;
+    const qx = nx >= 0 ? minX : maxX;
+    const qy = ny >= 0 ? minY : maxY;
+    const qz = nz >= 0 ? minZ : maxZ;
+    if (nx * qx + ny * qy + nz * qz + c < 0) result = 1;
+  }
+  return result;
+}
+
+// 球体与 6 平面视锥相交测试（零分配，用于流星/火花/冲击波/特效锚点剔除）
+function isSphereInFrustum(planes, x, y, z, radius) {
+  for (let k = 0; k < 6; k++) {
+    const pl = planes[k];
+    if (pl.normal.x * x + pl.normal.y * y + pl.normal.z * z + pl.constant < -radius) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// 水平圆盘柱体 [0, maxY] 与 6 平面视锥相交测试（用于波纹外影响圆精确剔除）
+function isRippleDiskInFrustum(planes, x, z, radius, maxY) {
+  for (let k = 0; k < 6; k++) {
+    const pl = planes[k];
+    const nx = pl.normal.x;
+    const ny = pl.normal.y;
+    const nz = pl.normal.z;
+    const horiz = Math.hypot(nx, nz) * radius;
+    const top = ny > 0 ? ny * maxY : 0;
+    if (nx * x + nz * z + horiz + top + pl.constant < 0) return false;
+  }
+  return true;
+}
 
 const TerrainSceneInner = le.forwardRef(
   (
@@ -187,6 +242,7 @@ const TerrainSceneInner = le.forwardRef(
     }
 
     const sb = le.useRef(null),
+      skyMeshRef = le.useRef(null),
       tileMeshRefs = le.useRef([]),
       { clock: R, camera: A, gl: E } = tL(),
       C = le.useRef(o),
@@ -227,30 +283,66 @@ const TerrainSceneInner = le.forwardRef(
     const mapMat = le.useMemo(() => new MapShaderMaterial(), []);
     const floorMat = le.useMemo(() => new FloorDiscMaterial(), []);
 
-    // 4×4 空间瓦片：16B 紧凑实例属性 aInstPos + 精确包围球支持真实视锥剔除与从近到远排序
+    // 4×4 空间瓦片 + 4×4 微块两级视锥层次：
+    //   - 保持最多 16 次地形绘制调用，完全兼容 TILES_DIM=4 网格划分
+    //   - 边界瓦片按微块块拷贝 + 逐柱精确紧凑打包，静止视角零 CPU/GPU 开销，动态旋转仅扫描视锥边缘
     const tiles = le.useMemo(() => {
       const half = (m * F) / 2;
       const diskRadiusSq = half * half;
+      const subTotal = SUB_DIM * SUB_DIM;
       const buckets = Array.from({ length: TILES_DIM * TILES_DIM }, () => ({
-        coords: [],
         minX: Infinity,
         maxX: -Infinity,
         minZ: Infinity,
         maxZ: -Infinity,
+        minGx: m,
+        maxGx: -1,
+        minGy: m,
+        maxGy: -1,
+        totalCount: 0,
+        subs: Array.from({ length: subTotal }, () => ({
+          coords: [],
+          minX: Infinity,
+          maxX: -Infinity,
+          minZ: Infinity,
+          maxZ: -Infinity,
+          minGx: m,
+          maxGx: -1,
+          minGy: m,
+          maxGy: -1,
+        })),
       }));
       for (let gx = 0; gx < m; gx++) {
-        const tx = Math.min(TILES_DIM - 1, Math.floor((gx / m) * TILES_DIM));
+        const txF = (gx / m) * TILES_DIM;
+        const tx = Math.min(TILES_DIM - 1, Math.floor(txF));
+        const sx = Math.min(SUB_DIM - 1, Math.floor((txF - tx) * SUB_DIM));
         const xx = gx * F - half;
         for (let gy = 0; gy < m; gy++) {
           const yy = gy * F - half;
           if (xx * xx + yy * yy <= diskRadiusSq) {
-            const ty = Math.min(TILES_DIM - 1, Math.floor((gy / m) * TILES_DIM));
+            const tyF = (gy / m) * TILES_DIM;
+            const ty = Math.min(TILES_DIM - 1, Math.floor(tyF));
+            const sy = Math.min(SUB_DIM - 1, Math.floor((tyF - ty) * SUB_DIM));
             const b = buckets[ty * TILES_DIM + tx];
-            b.coords.push(xx, yy, gx, gy);
+            const sub = b.subs[sy * SUB_DIM + sx];
+            sub.coords.push(xx, yy, gx, gy);
+            b.totalCount++;
             if (xx < b.minX) b.minX = xx;
             if (xx > b.maxX) b.maxX = xx;
             if (yy < b.minZ) b.minZ = yy;
             if (yy > b.maxZ) b.maxZ = yy;
+            if (gx < b.minGx) b.minGx = gx;
+            if (gx > b.maxGx) b.maxGx = gx;
+            if (gy < b.minGy) b.minGy = gy;
+            if (gy > b.maxGy) b.maxGy = gy;
+            if (xx < sub.minX) sub.minX = xx;
+            if (xx > sub.maxX) sub.maxX = xx;
+            if (yy < sub.minZ) sub.minZ = yy;
+            if (yy > sub.maxZ) sub.maxZ = yy;
+            if (gx < sub.minGx) sub.minGx = gx;
+            if (gx > sub.maxGx) sub.maxGx = gx;
+            if (gy < sub.minGy) sub.minGy = gy;
+            if (gy > sub.maxGy) sub.maxGy = gy;
           }
         }
       }
@@ -258,17 +350,44 @@ const TerrainSceneInner = le.forwardRef(
       const pad = P * 0.6;
       for (let i = 0; i < buckets.length; i++) {
         const b = buckets[i];
-        const count = b.coords.length >> 2;
+        const count = b.totalCount;
         if (count === 0) continue;
+        const allCoords = new Float32Array(count * 4);
+        const microBlocks = [];
+        let writeOffset = 0;
+        for (let s = 0; s < b.subs.length; s++) {
+          const sub = b.subs[s];
+          const subCount = sub.coords.length >> 2;
+          if (subCount === 0) continue;
+          const start = writeOffset;
+          allCoords.set(sub.coords, start);
+          writeOffset += sub.coords.length;
+          microBlocks.push({
+            start,
+            end: writeOffset,
+            count: subCount,
+            minX: sub.minX,
+            maxX: sub.maxX,
+            minZ: sub.minZ,
+            maxZ: sub.maxZ,
+            minGx: sub.minGx,
+            maxGx: sub.maxGx,
+            minGy: sub.minGy,
+            maxGy: sub.maxGy,
+            cx: (sub.minX + sub.maxX) * 0.5,
+            cz: (sub.minZ + sub.maxZ) * 0.5,
+            distSq: 0,
+          });
+        }
+        const visibleCoords = new Float32Array(allCoords);
+        const instAttr = new InstancedBufferAttribute(visibleCoords, 4);
+        instAttr.setUsage(DynamicDrawUsage);
         const geo = new InstancedBufferGeometry();
         geo.setAttribute("position", pillarGeo.getAttribute("position"));
         geo.setAttribute("normal", pillarGeo.getAttribute("normal"));
         geo.setAttribute("uv", pillarGeo.getAttribute("uv"));
         geo.setIndex(pillarGeo.getIndex());
-        geo.setAttribute(
-          "aInstPos",
-          new InstancedBufferAttribute(new Float32Array(b.coords), 4),
-        );
+        geo.setAttribute("aInstPos", instAttr);
         geo.instanceCount = count;
         const box = new Box3(
           new j(b.minX - pad, 0, b.minZ - pad),
@@ -281,6 +400,22 @@ const TerrainSceneInner = le.forwardRef(
         list.push({
           id: `${m}_${i}`,
           geometry: geo,
+          instAttr,
+          allCoords,
+          visibleCoords,
+          microBlocks,
+          mbOrder: microBlocks.map((_, idx) => idx),
+          totalCount: count,
+          visCount: count,
+          isCompacted: false,
+          minX: b.minX,
+          maxX: b.maxX,
+          minZ: b.minZ,
+          maxZ: b.maxZ,
+          minGx: b.minGx,
+          maxGx: b.maxGx,
+          minGy: b.minGy,
+          maxGy: b.maxGy,
           cx: (b.minX + b.maxX) * 0.5,
           cz: (b.minZ + b.maxZ) * 0.5,
           distSq: 0,
@@ -292,6 +427,31 @@ const TerrainSceneInner = le.forwardRef(
 
     // 预分配瓦片排序数组（零 GC）
     const tileOrder = le.useMemo(() => tiles.map((_, idx) => idx), [tiles]);
+
+    // 视锥剔除缓存状态（零 GC；静止视角下跳过全部瓦片/微块/缓冲上传）
+    const cullStateRef = le.useRef({
+      frustum: new Frustum(),
+      viewProj: new jt(),
+      prevViewProj: new Float32Array(16),
+      planeNX: new Float32Array(6),
+      planeNZ: new Float32Array(6),
+      planeBias: new Float32Array(6),
+      prevMaxY: -1,
+      prevTiles: null,
+      prevFbo: null,
+      ready: false,
+      totalVisiblePillars: 0,
+      visMinGx: 0,
+      visMaxGx: 0,
+      visMinGy: 0,
+      visMaxGy: 0,
+      visCenterX: 0,
+      visCenterZ: 0,
+      visRadius: 84,
+      skyCovered: false,
+    });
+    const tilesRef = le.useRef(tiles);
+    tilesRef.current = tiles;
 
     // GPU 离屏高度场 FBO 管线（gridSize 变更时重建并释放旧目标）
     const fboPipe = le.useMemo(() => {
@@ -529,7 +689,50 @@ const TerrainSceneInner = le.forwardRef(
       raycaster = le.useMemo(() => new j1(), []),
       clickNdc = le.useMemo(() => new Xe(), []),
       groundPlane = le.useMemo(() => new Ql(new j(0, 1, 0), 0), []),
-      hitPoint = le.useMemo(() => new j(), []);
+      hitPoint = le.useMemo(() => new j(), []),
+      spawnPt = le.useMemo(() => new Xe(), []);
+
+    // 在当前屏幕可见地形盘区域内采样随机点（优先极坐标抽样，退化时直接取可见柱子，零屏幕外浪费）
+    const pickVisibleTerrainPoint = le.useCallback(
+      (minR, maxR, panOffset, out) => {
+        const cs = cullStateRef.current;
+        const maxDiskR = W * 0.92;
+        const maxDiskRSq = maxDiskR * maxDiskR;
+        if (cs.ready) {
+          const planes = cs.frustum.planes;
+          for (let attempt = 0; attempt < 12; attempt++) {
+            const ang = Math.random() * Math.PI * 2;
+            const dist = minR + Math.random() * (maxR - minR);
+            const rx = Math.cos(ang) * dist + panOffset;
+            const rz = Math.sin(ang) * dist;
+            if (rx * rx + rz * rz <= maxDiskRSq && isSphereInFrustum(planes, rx, 1.5, rz, -1.5)) {
+              out.set(rx, rz);
+              return out;
+            }
+          }
+          // 若当前视角较窄/贴近导致极坐标未命中，直接从已剔除的可见柱子中加权随机抽取
+          const curTiles = tilesRef.current;
+          if (cs.totalVisiblePillars > 0 && curTiles.length > 0) {
+            let pick = Math.floor(Math.random() * cs.totalVisiblePillars);
+            for (let i = 0; i < curTiles.length; i++) {
+              const vc = curTiles[i].visCount;
+              if (vc <= 0) continue;
+              if (pick < vc) {
+                const coords = curTiles[i].visibleCoords;
+                out.set(coords[pick * 4], coords[pick * 4 + 1]);
+                return out;
+              }
+              pick -= vc;
+            }
+          }
+        }
+        const ang = Math.random() * Math.PI * 2;
+        const dist = minR + Math.random() * (maxR - minR);
+        out.set(Math.cos(ang) * dist + panOffset, Math.sin(ang) * dist);
+        return out;
+      },
+      [W],
+    );
 
     // 首帧初始化 instanceColor 属性，并将空闲特效 mesh 隐藏（0 drawcall）
     le.useLayoutEffect(() => {
@@ -642,20 +845,17 @@ const TerrainSceneInner = le.forwardRef(
           const now = R.getElapsedTime();
           if (now - Pt.current < 0.08) return;
           Pt.current = now;
-          const ang = Math.random() * Math.PI * 2,
-            dist = 14 + Math.random() * 38;
-          const tx = Math.cos(ang) * dist + pan * 10;
-          const tz = Math.sin(ang) * dist;
+          pickVisibleTerrainPoint(14, 52, pan * 10, spawnPt);
           // 音频自动流星采用低空高速切入（飞行约 0.2~0.3s），大幅缩减音画撞击滞后
           spawnMeteorTo(
-            tx,
-            tz,
+            spawnPt.x,
+            spawnPt.y,
             28 + Math.random() * 10,
             1.65 + Math.random() * 0.35 + strength * 0.38,
             strength,
           );
         },
-        [R, spawnMeteorTo],
+        [R, spawnMeteorTo, pickVisibleTerrainPoint, spawnPt],
       );
 
     const xt = le.useRef({
@@ -673,16 +873,21 @@ const TerrainSceneInner = le.forwardRef(
           Ht(Math.min(2.6, Math.max(0.55, val * 1.45)), pan);
         } else {
           const now = performance.now();
+          const cs = cullStateRef.current;
+          const anchorOffscreen =
+            xt.current.initialized &&
+            cs.ready &&
+            !isSphereInFrustum(cs.frustum.planes, xt.current.x, 1.5, xt.current.z, 4.0);
           if (
             !xt.current.initialized ||
+            anchorOffscreen ||
             now - xt.current.lastTriggerTime > Ue ||
             xt.current.hitsRemaining <= 0
           ) {
-            // 锚点分布在中内环到外环（半径 14..46），避开与中心低音主峰重叠，并轻微响应声像偏置
-            const ang = Math.random() * Math.PI * 2;
-            const dist = 14 + Math.random() * 32;
-            xt.current.x = Math.cos(ang) * dist + pan * 12;
-            xt.current.z = Math.sin(ang) * dist;
+            // 锚点仅在当前可见区域中内环到外环采样，避开屏幕外不可见波纹浪费
+            pickVisibleTerrainPoint(14, 46, pan * 12, spawnPt);
+            xt.current.x = spawnPt.x;
+            xt.current.z = spawnPt.y;
             xt.current.hitsRemaining = 3 + Math.floor(Math.random() * 5);
             xt.current.initialized = !0;
           }
@@ -693,16 +898,15 @@ const TerrainSceneInner = le.forwardRef(
             rx = xt.current.x + (Math.random() - 0.5) * 9;
             rz = xt.current.z + (Math.random() - 0.5) * 9;
           } else {
-            const ang = Math.random() * Math.PI * 2,
-              dist = 15 + Math.random() * 45;
-            rx = Math.cos(ang) * dist;
-            rz = Math.sin(ang) * dist;
+            pickVisibleTerrainPoint(15, 60, 0, spawnPt);
+            rx = spawnPt.x;
+            rz = spawnPt.y;
           }
           // 保留轻重拍强弱梯度（对应 amp ≈ 0.22..1.0，不再过早顶满）
           ne(rx, rz, Math.min(2.7, Math.max(0.55, val * 2.05)));
         }
       };
-    }, [Ht, ne]);
+    }, [Ht, ne, pickVisibleTerrainPoint, spawnPt]);
 
     le.useImperativeHandle(
       x,
@@ -751,7 +955,7 @@ const TerrainSceneInner = le.forwardRef(
       Ye(o, c, e);
     }, [o, c, e, h, Ye]);
 
-    // 紧凑打包活跃实例：仅提交活跃数量，空闲时直接隐藏跳过 draw call
+    // 紧凑打包屏幕内可见实例：仅提交视锥内活跃对象，无可见项时直接隐藏跳过 draw call
     const updateMeteorMatrices = () => {
       const mesh = Y.current;
       if (!mesh) return;
@@ -760,14 +964,24 @@ const TerrainSceneInner = le.forwardRef(
         mesh.visible = false;
         return;
       }
+      const cs = cullStateRef.current;
+      const planes = cs.ready ? cs.frustum.planes : null;
       let out = 0;
       for (let k = 0; k < Q; k++) {
         const mt = ze.current[k];
         if (!mt.active) continue;
-        Pe.set(mt.x, Math.max(0, mt.y), mt.z);
+        const headY = Math.max(0, mt.y);
+        const lenScale = 0.85 + Math.min(0.9, mt.speed * 0.35);
+        if (planes) {
+          const halfTail = 5.75 * lenScale;
+          const midX = mt.x - mt.dx * halfTail;
+          const midY = headY - mt.dy * halfTail;
+          const midZ = mt.z - mt.dz * halfTail;
+          if (!isSphereInFrustum(planes, midX, midY, midZ, halfTail + 1.5)) continue;
+        }
+        Pe.set(mt.x, headY, mt.z);
         velDir.set(-mt.dx, -mt.dy, -mt.dz).normalize();
         ce.setFromUnitVectors(UP_VEC, velDir);
-        const lenScale = 0.85 + Math.min(0.9, mt.speed * 0.35);
         Be.set(1.05, lenScale, 1.05);
         Ne.compose(Pe, ce, Be);
         mesh.setMatrixAt(out++, Ne);
@@ -785,12 +999,15 @@ const TerrainSceneInner = le.forwardRef(
         mesh.visible = false;
         return;
       }
+      const cs = cullStateRef.current;
+      const planes = cs.ready ? cs.frustum.planes : null;
       let out = 0;
       for (let k = 0; k < ae; k++) {
         const p = q.current[k];
         if (!p.active) continue;
         const heat = Math.max(0, 1 - p.life / p.maxLife);
         const s = p.scale * (0.25 + 0.75 * heat);
+        if (planes && !isSphereInFrustum(planes, p.x, p.y, p.z, s * 1.5 + 0.5)) continue;
         const spd = Math.hypot(p.vx, p.vy, p.vz);
         if (spd > 0.05) {
           velDir.set(p.vx / spd, p.vy / spd, p.vz / spd);
@@ -821,6 +1038,8 @@ const TerrainSceneInner = le.forwardRef(
         mesh.visible = false;
         return;
       }
+      const cs = cullStateRef.current;
+      const planes = cs.ready ? cs.frustum.planes : null;
       let out = 0;
       for (let k = 0; k < RING_POOL; k++) {
         const ring = shockRings.current[k];
@@ -828,7 +1047,9 @@ const TerrainSceneInner = le.forwardRef(
         const p = ring.life / ring.maxLife;
         const easeOut = 1 - Math.pow(1 - p, 2.6);
         const rad = 1.4 + easeOut * ring.maxRadius;
-        Pe.set(ring.x, ring.y + easeOut * 1.15, ring.z);
+        const ringY = ring.y + easeOut * 1.15;
+        if (planes && !isSphereInFrustum(planes, ring.x, ringY, ring.z, rad + 0.8)) continue;
+        Pe.set(ring.x, ringY, ring.z);
         ce.identity();
         Be.set(rad, 1, rad);
         Ne.compose(Pe, ce, Be);
@@ -855,7 +1076,304 @@ const TerrainSceneInner = le.forwardRef(
       const nt = audioEngine.getAudioData(dt);
       const idleIntensity = audioEngine.getIdleWaveIntensity(dt);
 
-      // 1. 物理更新：流星 / 火花 / 冲击波（空闲跳过全部循环）
+      // 0. 相机更新 + 两级视锥剔除（静止视角零 CPU/GPU 缓冲上传；仅渲染屏幕内柱子与 FBO 区域）
+      if (h) {
+        C.current = (C.current + d * dt) % 360;
+        Ye(C.current, c, e);
+      }
+
+      const cs = cullStateRef.current;
+      A.updateMatrixWorld();
+      cs.viewProj.multiplyMatrices(A.projectionMatrix, A.matrixWorldInverse);
+      // 基于当前用户参数的保守安全柱高上界（不随帧音频抖动，保证静止视角零重传且屏幕底边零穿帮）
+      const maxPillarY = Math.max(6, Math.min(40, 1.5 + (t ? 3.8 : 0) + 14.5 * n + 8.0));
+
+      const vpEl = cs.viewProj.elements;
+      const prevEl = cs.prevViewProj;
+      let frustumDirty =
+        !cs.ready ||
+        cs.prevMaxY !== maxPillarY ||
+        cs.prevTiles !== tiles ||
+        cs.prevFbo !== fboPipe;
+      if (!frustumDirty) {
+        for (let i = 0; i < 16; i++) {
+          if (Math.abs(vpEl[i] - prevEl[i]) > 1e-6) {
+            frustumDirty = true;
+            break;
+          }
+        }
+      }
+
+      let skyJustRevealed = false;
+      if (frustumDirty) {
+        prevEl.set(vpEl);
+        cs.prevMaxY = maxPillarY;
+        cs.prevTiles = tiles;
+        cs.prevFbo = fboPipe;
+        cs.ready = true;
+
+        cs.frustum.setFromProjectionMatrix(cs.viewProj);
+        const planes = cs.frustum.planes;
+        const pillarPad = P * 0.6;
+        // FBO 额外扩展 1.5 格边距，确保 FloorDiscMaterial 2×2 双线性邻域 texel 始终有效
+        const fboPad = pillarPad + F * 1.5;
+        const pNX = cs.planeNX;
+        const pNZ = cs.planeNZ;
+        const pBias = cs.planeBias;
+        const fboCullUniforms = fboPipe ? fboPipe.simMat.uniforms.uFrustumCull.value : null;
+        for (let k = 0; k < 6; k++) {
+          const pl = planes[k];
+          const nx = pl.normal.x;
+          const ny = pl.normal.y;
+          const nz = pl.normal.z;
+          const topY = ny > 0 ? ny * maxPillarY : 0;
+          const absSum = Math.abs(nx) + Math.abs(nz);
+          pNX[k] = nx;
+          pNZ[k] = nz;
+          pBias[k] = absSum * pillarPad + topY + pl.constant;
+          if (fboCullUniforms) {
+            fboCullUniforms[k].set(nx, nz, absSum * fboPad + topY + pl.constant, 0);
+          }
+        }
+
+        const p0x = pNX[0], p0z = pNZ[0], p0b = pBias[0];
+        const p1x = pNX[1], p1z = pNZ[1], p1b = pBias[1];
+        const p2x = pNX[2], p2z = pNZ[2], p2b = pBias[2];
+        const p3x = pNX[3], p3z = pNZ[3], p3b = pBias[3];
+        const p4x = pNX[4], p4z = pNZ[4], p4b = pBias[4];
+        const p5x = pNX[5], p5z = pNZ[5], p5b = pBias[5];
+
+        const camX = A.position.x;
+        const camZ = A.position.z;
+        let totalVis = 0;
+        let totalAll = 0;
+        let visTiles = 0;
+        let vMinGx = m, vMaxGx = -1, vMinGy = m, vMaxGy = -1;
+        let vMinX = Infinity, vMaxX = -Infinity, vMinZ = Infinity, vMaxZ = -Infinity;
+
+        for (let i = 0; i < tiles.length; i++) {
+          const tile = tiles[i];
+          totalAll += tile.totalCount;
+          const dx = tile.cx - camX;
+          const dz = tile.cz - camZ;
+          tile.distSq = dx * dx + dz * dz;
+          const mesh = tileMeshRefs.current[i];
+
+          const tState = classifyBoxFrustum(
+            planes,
+            tile.minX - pillarPad,
+            0,
+            tile.minZ - pillarPad,
+            tile.maxX + pillarPad,
+            maxPillarY,
+            tile.maxZ + pillarPad,
+          );
+
+          if (tState === 0) {
+            tile.visCount = 0;
+            tile.geometry.instanceCount = 0;
+            if (mesh) mesh.visible = false;
+            continue;
+          }
+
+          if (tState === 2) {
+            if (tile.isCompacted) {
+              tile.visibleCoords.set(tile.allCoords);
+              tile.instAttr.clearUpdateRanges();
+              tile.instAttr.addUpdateRange(0, tile.totalCount * 4);
+              tile.instAttr.needsUpdate = true;
+              tile.isCompacted = false;
+            }
+            tile.visCount = tile.totalCount;
+            tile.geometry.instanceCount = tile.totalCount;
+            if (mesh) mesh.visible = true;
+            totalVis += tile.totalCount;
+            visTiles++;
+            if (tile.minGx < vMinGx) vMinGx = tile.minGx;
+            if (tile.maxGx > vMaxGx) vMaxGx = tile.maxGx;
+            if (tile.minGy < vMinGy) vMinGy = tile.minGy;
+            if (tile.maxGy > vMaxGy) vMaxGy = tile.maxGy;
+            if (tile.minX < vMinX) vMinX = tile.minX;
+            if (tile.maxX > vMaxX) vMaxX = tile.maxX;
+            if (tile.minZ < vMinZ) vMinZ = tile.minZ;
+            if (tile.maxZ > vMaxZ) vMaxZ = tile.maxZ;
+            continue;
+          }
+
+          // 边界相交瓦片：按 4×4 微块由近到远排序，整块拷贝或逐柱 6 平面精确过滤
+          const mbs = tile.microBlocks;
+          const order = tile.mbOrder;
+          for (let s = 0; s < mbs.length; s++) {
+            const mb = mbs[s];
+            const mdx = mb.cx - camX;
+            const mdz = mb.cz - camZ;
+            mb.distSq = mdx * mdx + mdz * mdz;
+          }
+          order.sort((a, b) => mbs[a].distSq - mbs[b].distSq);
+
+          const src = tile.allCoords;
+          const dst = tile.visibleCoords;
+          let outFloat = 0;
+
+          for (let s = 0; s < order.length; s++) {
+            const mb = mbs[order[s]];
+            const mbState = classifyBoxFrustum(
+              planes,
+              mb.minX - pillarPad,
+              0,
+              mb.minZ - pillarPad,
+              mb.maxX + pillarPad,
+              maxPillarY,
+              mb.maxZ + pillarPad,
+            );
+            if (mbState === 0) continue;
+            if (mbState === 2) {
+              const len = mb.end - mb.start;
+              dst.set(src.subarray(mb.start, mb.end), outFloat);
+              outFloat += len;
+              if (mb.minGx < vMinGx) vMinGx = mb.minGx;
+              if (mb.maxGx > vMaxGx) vMaxGx = mb.maxGx;
+              if (mb.minGy < vMinGy) vMinGy = mb.minGy;
+              if (mb.maxGy > vMaxGy) vMaxGy = mb.maxGy;
+              if (mb.minX < vMinX) vMinX = mb.minX;
+              if (mb.maxX > vMaxX) vMaxX = mb.maxX;
+              if (mb.minZ < vMinZ) vMinZ = mb.minZ;
+              if (mb.maxZ > vMaxZ) vMaxZ = mb.maxZ;
+            } else {
+              for (let off = mb.start; off < mb.end; off += 4) {
+                const xx = src[off];
+                const yy = src[off + 1];
+                if (
+                  p0x * xx + p0z * yy + p0b >= 0 &&
+                  p1x * xx + p1z * yy + p1b >= 0 &&
+                  p2x * xx + p2z * yy + p2b >= 0 &&
+                  p3x * xx + p3z * yy + p3b >= 0 &&
+                  p4x * xx + p4z * yy + p4b >= 0 &&
+                  p5x * xx + p5z * yy + p5b >= 0
+                ) {
+                  const gx = src[off + 2];
+                  const gy = src[off + 3];
+                  dst[outFloat] = xx;
+                  dst[outFloat + 1] = yy;
+                  dst[outFloat + 2] = gx;
+                  dst[outFloat + 3] = gy;
+                  outFloat += 4;
+                  if (gx < vMinGx) vMinGx = gx;
+                  if (gx > vMaxGx) vMaxGx = gx;
+                  if (gy < vMinGy) vMinGy = gy;
+                  if (gy > vMaxGy) vMaxGy = gy;
+                  if (xx < vMinX) vMinX = xx;
+                  if (xx > vMaxX) vMaxX = xx;
+                  if (yy < vMinZ) vMinZ = yy;
+                  if (yy > vMaxZ) vMaxZ = yy;
+                }
+              }
+            }
+          }
+
+          const vc = outFloat >> 2;
+          tile.visCount = vc;
+          tile.geometry.instanceCount = vc;
+          tile.isCompacted = true;
+          if (mesh) mesh.visible = vc > 0;
+          if (vc > 0) {
+            tile.instAttr.clearUpdateRanges();
+            tile.instAttr.addUpdateRange(0, outFloat);
+            tile.instAttr.needsUpdate = true;
+            totalVis += vc;
+            visTiles++;
+          }
+        }
+
+        // 从近到远排布可见瓦片绘制顺序（硬件 Early-Z 消除柱体自遮挡 Overdraw）
+        tileOrder.sort((a, b) => tiles[a].distSq - tiles[b].distSq);
+        for (let rank = 0; rank < tileOrder.length; rank++) {
+          const mesh = tileMeshRefs.current[tileOrder[rank]];
+          if (mesh) mesh.renderOrder = 10 + rank;
+        }
+
+        cs.totalVisiblePillars = totalVis;
+        if (totalVis > 0) {
+          cs.visMinGx = vMinGx;
+          cs.visMaxGx = vMaxGx;
+          cs.visMinGy = vMinGy;
+          cs.visMaxGy = vMaxGy;
+          cs.visCenterX = (vMinX + vMaxX) * 0.5;
+          cs.visCenterZ = (vMinZ + vMaxZ) * 0.5;
+          cs.visRadius = Math.hypot((vMaxX - vMinX) * 0.5, (vMaxZ - vMinZ) * 0.5) + pillarPad;
+        } else {
+          cs.visMinGx = 0;
+          cs.visMaxGx = -1;
+          cs.visMinGy = 0;
+          cs.visMaxGy = -1;
+          cs.visCenterX = 0;
+          cs.visCenterZ = 0;
+          cs.visRadius = 0;
+        }
+
+        // 配置 FBO 硬件 Scissor 矩形（仅光栅化可见柱群外接网格 + 2 格双线性安全边距）
+        let scW = 0, scH = 0;
+        if (fboPipe) {
+          if (totalVis > 0) {
+            const scMinX = Math.max(0, vMinGx - 2);
+            const scMaxX = Math.min(m - 1, vMaxGx + 2);
+            const scMinY = Math.max(0, vMinGy - 2);
+            const scMaxY = Math.min(m - 1, vMaxGy + 2);
+            scW = scMaxX - scMinX + 1;
+            scH = scMaxY - scMinY + 1;
+            fboPipe.simRT.scissorTest = true;
+            fboPipe.simRT.scissor.set(scMinX, scMinY, scW, scH);
+          } else {
+            fboPipe.simRT.scissorTest = true;
+            fboPipe.simRT.scissor.set(0, 0, 0, 0);
+          }
+        }
+
+        // 检测屏幕四角是否 100% 落入不透明底盘圆内（纯俯视/极近视角时直接跳过天空绘制与 uniform 计算）
+        const floorSafeR = Math.max(1, W - F * 0.75 - 1.5);
+        const floorSafeRSq = floorSafeR * floorSafeR;
+        let allCornersCovered = true;
+        for (let ci = 0; ci < 4; ci++) {
+          raycaster.setFromCamera(SKY_CORNERS[ci], A);
+          const dirY = raycaster.ray.direction.y;
+          if (dirY >= -1e-4) {
+            allCornersCovered = false;
+            break;
+          }
+          const tHit = (0.20 - raycaster.ray.origin.y) / dirY;
+          if (tHit <= 0) {
+            allCornersCovered = false;
+            break;
+          }
+          const hx = raycaster.ray.origin.x + raycaster.ray.direction.x * tHit;
+          const hz = raycaster.ray.origin.z + raycaster.ray.direction.z * tHit;
+          if (hx * hx + hz * hz > floorSafeRSq) {
+            allCornersCovered = false;
+            break;
+          }
+        }
+        if (cs.skyCovered && !allCornersCovered) skyJustRevealed = true;
+        cs.skyCovered = allCornersCovered;
+        if (skyMeshRef.current) skyMeshRef.current.visible = !allCornersCovered;
+
+        // 轻量只读诊断快照（供性能验证脚本读取，仅在视角变化时写入）
+        if (typeof window !== "undefined") {
+          window.__soundCullStats = {
+            gridSize: m,
+            totalPillars: totalAll,
+            visiblePillars: totalVis,
+            visibleRatio: totalAll > 0 ? totalVis / totalAll : 0,
+            visibleTiles: visTiles,
+            totalTiles: tiles.length,
+            fboScissorRatio: m > 0 ? (scW * scH) / (m * m) : 0,
+            skyCovered: allCornersCovered,
+          };
+        }
+      }
+
+      const frustumPlanes = cs.frustum.planes;
+
+      // 1. 物理更新：流星 / 火花 / 冲击波（空闲跳过全部循环，屏幕外流星不生成不可见拖尾/爆裂粒子）
       const meteorsHad = mu.current > 0;
       if (meteorsHad) {
         const subRadius = Math.max(1, W * 0.24 * r);
@@ -880,9 +1398,17 @@ const TerrainSceneInner = le.forwardRef(
             mt.active = !1;
             mu.current--;
             ne(mt.x, mt.z, Math.min(2.7, Math.max(0.95, mt.strength * 1.15)), !0);
-            spawnShockRing(mt.x, estSurfaceY + 0.55, mt.z, mt.strength);
-            for (let s = 0; s < 14; s++) Se(mt.x, estSurfaceY + 0.45, mt.z, mt.speed * 1.15, !0);
-          } else if (Math.random() > 0.32) {
+            const ringMaxR = 8.5 + Math.min(9.5, mt.strength * 3.2);
+            if (isSphereInFrustum(frustumPlanes, mt.x, estSurfaceY + 1.0, mt.z, ringMaxR + 2.0)) {
+              spawnShockRing(mt.x, estSurfaceY + 0.55, mt.z, mt.strength);
+            }
+            if (isSphereInFrustum(frustumPlanes, mt.x, estSurfaceY + 2.0, mt.z, 8.0)) {
+              for (let s = 0; s < 14; s++) Se(mt.x, estSurfaceY + 0.45, mt.z, mt.speed * 1.15, !0);
+            }
+          } else if (
+            Math.random() > 0.32 &&
+            isSphereInFrustum(frustumPlanes, mt.x, mt.y, mt.z, 4.0)
+          ) {
             Se(mt.x, mt.y, mt.z, mt.speed * 0.22, !1);
           }
         }
@@ -932,31 +1458,15 @@ const TerrainSceneInner = le.forwardRef(
         }
       }
 
-      if (h) {
-        C.current = (C.current + d * dt) % 360;
-        Ye(C.current, c, e);
-      }
-
-      // 2. 空间瓦片从近到远排序（仅 ~12 个瓦片，赋予 renderOrder 10..25 触发硬件 Early-Z 消除柱体 Overdraw）
-      const camX = A.position.x;
-      const camZ = A.position.z;
-      for (let i = 0; i < tiles.length; i++) {
-        const dx = tiles[i].cx - camX;
-        const dz = tiles[i].cz - camZ;
-        tiles[i].distSq = dx * dx + dz * dz;
-      }
-      tileOrder.sort((a, b) => tiles[a].distSq - tiles[b].distSq);
-      for (let rank = 0; rank < tileOrder.length; rank++) {
-        const mesh = tileMeshRefs.current[tileOrder[rank]];
-        if (mesh) mesh.renderOrder = 10 + rank;
-      }
-
-      // 3. 活跃波纹打包（无活跃波纹时直接 O(1) 跳过）
+      // 3. 活跃波纹视锥与环带精确打包（仅提交当前能触及屏幕内可见柱子的波纹，无可见波纹零 GPU 循环）
       const qe = mapMat;
       let activeCount = 0;
-      if (activeRippleSlots.current > 0) {
+      if (activeRippleSlots.current > 0 && cs.totalVisiblePillars > 0) {
         const geoArr = qe.uniforms.uRippleGeo.value;
         const paramArr = qe.uniforms.uRippleParam.value;
+        const visCX = cs.visCenterX;
+        const visCZ = cs.visCenterZ;
+        const visR = cs.visRadius;
         for (let k = 0; k < X.current.length; k++) {
           const s = X.current[k];
           if (!s.isActive) continue;
@@ -977,6 +1487,13 @@ const TerrainSceneInner = le.forwardRef(
             activeRippleSlots.current = Math.max(0, activeRippleSlots.current - 1);
             continue;
           }
+          // 环带 [waveRadius - 12, waveRadius + 12] 与屏幕可见地形圈及视锥 6 平面相交校验
+          const outerR = waveRadius + 12.0;
+          const innerR = Math.max(0, waveRadius - 12.0);
+          const dVis = Math.hypot(s.x - visCX, s.z - visCZ);
+          if (dVis - visR > outerR || dVis + visR < innerR) continue;
+          if (!isRippleDiskInFrustum(frustumPlanes, s.x, s.z, outerR, maxPillarY)) continue;
+
           geoArr[activeCount].set(s.x, s.z, waveRadius, amp);
           paramArr[activeCount].set(1.0 / curWidth, isMeteor ? 1.0 : 0.0, elevationScale, 12.0);
           activeCount++;
@@ -1078,33 +1595,38 @@ const TerrainSceneInner = le.forwardRef(
 
       const idleVal = t ? idleIntensity : 0;
 
-      // 5. GPU 160×160 高度场离屏烘焙（每柱 1 次计算替代 20 顶点重复计算）
+      // 5. GPU 离屏高度场烘焙（硬件 Scissor + 6 平面视锥丢弃，仅模拟屏幕可见柱子）
       if (fboPipe) {
         const prevRT = E.getRenderTarget();
+        const prevAutoClear = E.autoClear;
+        E.autoClear = false;
         if (!fboPipe.staticBaked) {
           E.setRenderTarget(fboPipe.staticRT);
           E.render(fboPipe.staticScene, fboPipe.fsCamera);
           fboPipe.staticBaked = true;
         }
-        const sm = fboPipe.simMat;
-        sm.uTime = elapsed;
-        sm.uIdleWave = idleVal;
-        sm.uAudioIntensity = n;
-        sm.uResponseRange = r;
-        sm.uSubBass = nt.subBass;
-        sm.uBass = nt.bass;
-        sm.uLowMid = nt.lowMid;
-        sm.uMid = nt.mid;
-        sm.uHighMid = nt.highMid;
-        sm.uTreble = nt.treble;
-        sm.uSmoothness = nt.smoothness;
-        sm.uDensity = nt.density;
-        sm.uEnergy = nt.energy;
-        sm.uniforms.uActiveRipples.value = activeCount;
+        if (cs.totalVisiblePillars > 0) {
+          const sm = fboPipe.simMat;
+          sm.uTime = elapsed;
+          sm.uIdleWave = idleVal;
+          sm.uAudioIntensity = n;
+          sm.uResponseRange = r;
+          sm.uSubBass = nt.subBass;
+          sm.uBass = nt.bass;
+          sm.uLowMid = nt.lowMid;
+          sm.uMid = nt.mid;
+          sm.uHighMid = nt.highMid;
+          sm.uTreble = nt.treble;
+          sm.uSmoothness = nt.smoothness;
+          sm.uDensity = nt.density;
+          sm.uEnergy = nt.energy;
+          sm.uniforms.uActiveRipples.value = activeCount;
 
-        E.setRenderTarget(fboPipe.simRT);
-        E.render(fboPipe.simScene, fboPipe.fsCamera);
+          E.setRenderTarget(fboPipe.simRT);
+          E.render(fboPipe.simScene, fboPipe.fsCamera);
+        }
         E.setRenderTarget(prevRT);
+        E.autoClear = prevAutoClear;
 
         qe.uUseFbo = 1;
         qe.uSimTex0 = fboPipe.simRT.textures[0];
@@ -1153,8 +1675,8 @@ const TerrainSceneInner = le.forwardRef(
         floorMat.uGlowIntensity = qe.uGlowIntensity;
       }
 
-      // 6. Early-Z 全屏单三角形天空（视角自适应圆盘曲率地平线 + 全屏主题暗底，CPU 预计算旋转）
-      if (sb.current) {
+      // 6. Early-Z 全屏单三角形天空（纯俯视满屏覆盖时直接跳过绘制与 uniform 更新）
+      if (sb.current && !cs.skyCovered) {
         const su = sb.current.uniforms;
         su.uTime.value = elapsed;
         su.uHalfExtent.value = W;
@@ -1175,7 +1697,7 @@ const TerrainSceneInner = le.forwardRef(
         su.uStarRot2.value.set(Math.cos(sa2), Math.sin(sa2));
         su.uStarRot3.value.set(Math.cos(sa3), Math.sin(sa3));
 
-        if (colorDirty) {
+        if (colorDirty || skyJustRevealed) {
           su.uFogColor.value.copy(qe.uBaseColor1);
           su.uBaseColor2.value.copy(qe.uBaseColor2);
           su.uNebulaA.value.copy(qe.uCoolCore);
@@ -1212,7 +1734,7 @@ const TerrainSceneInner = le.forwardRef(
 
     return Dt.jsxs(Dt.Fragment, {
       children: [
-        // 1. 4×4 空间瓦片音域地形（renderOrder 10..25 由近到远，真实视锥剔除 + 硬件 Early-Z）
+        // 1. 4×4 空间瓦片音域地形（由自研两级视锥剔除精确控制 visible 与 instanceCount）
         tiles.map((tile, idx) =>
           Dt.jsx(
             "mesh",
@@ -1222,7 +1744,7 @@ const TerrainSceneInner = le.forwardRef(
               },
               geometry: tile.geometry,
               material: mapMat,
-              frustumCulled: !0,
+              frustumCulled: !1,
               renderOrder: 10 + idx,
             },
             tile.id,
@@ -1232,11 +1754,12 @@ const TerrainSceneInner = le.forwardRef(
         Dt.jsx("mesh", {
           geometry: floorGeo,
           material: floorMat,
-          frustumCulled: !1,
+          frustumCulled: !0,
           renderOrder: 28,
         }),
-        // 2. 全屏单三角形 Early-Z 天空（排在地形柱与底盘之后，被遮挡区域零片元计算）
+        // 2. 全屏单三角形 Early-Z 天空（排在地形柱与底盘之后，被遮挡区域零片元计算；满屏覆盖时直接隐藏）
         Dt.jsx("mesh", {
+          ref: skyMeshRef,
           geometry: fsTriGeo,
           renderOrder: 30,
           frustumCulled: !1,

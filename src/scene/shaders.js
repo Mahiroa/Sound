@@ -174,6 +174,7 @@ const HeightfieldSimMaterial = createShaderMaterial(
     uActiveRipples: 0,
     uRippleGeo: Array.from({ length: 20 }, () => new V4(0, 0, 0, 0)),
     uRippleParam: Array.from({ length: 20 }, () => new V4(0.2, 0, 3.0, 12.0)),
+    uFrustumCull: Array.from({ length: 6 }, () => new V4(0, 0, 1, 0)),
   },
   FULLSCREEN_VS_GLSL3,
   `
@@ -199,6 +200,7 @@ const HeightfieldSimMaterial = createShaderMaterial(
     uniform int uActiveRipples;
     uniform vec4 uRippleGeo[20];
     uniform vec4 uRippleParam[20];
+    uniform vec4 uFrustumCull[6];
 
     layout(location = 0) out vec4 outSim0;
     layout(location = 1) out vec4 outSim1;
@@ -219,6 +221,14 @@ const HeightfieldSimMaterial = createShaderMaterial(
       }
 
       vec2 pos2D = vec2(cell) * uGridStep - vec2(uHalfExtent);
+
+      // 视锥 6 平面精确剔除：屏幕外柱子直接丢弃，零噪声/频段/波纹计算与 MRT 写出
+      for (int p = 0; p < 6; p++) {
+        vec4 pl = uFrustumCull[p];
+        if (dot(pl.xy, pos2D) + pl.z < 0.0) {
+          discard;
+        }
+      }
       float rnd = st.g;
       float riverNoise = st.b;
       float colorVar = st.a;

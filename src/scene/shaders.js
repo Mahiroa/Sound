@@ -696,110 +696,101 @@ const MapShaderMaterial = createShaderMaterial(
       float farSoft = clamp(max(smoothstep(0.055, 0.18, uvFw), smoothstep(0.18, 0.72, aerialFog)), 0.0, 1.0);
       float detailFade = (1.0 - smoothstep(0.032, 0.135, uvFw)) * (1.0 - smoothstep(0.16, 0.60, aerialFog));
 
-      // 磨砂冰晶/萤石光学项：双层菲涅尔 + 主光/背光方向 + 柔润晶面高光
+      // 高级通透水晶光学项：深邃琉璃底 + 紧致玻璃镜面高光 + 锐利掠射菲涅尔（彻底杜绝发灰塑料感）
       float NdotV = max(dot(N, V), 0.0);
       float omv = 1.0 - NdotV;
-      float fresnelSoft = omv * omv;
-      float fresnel = fresnelSoft * omv;
+      float fresnel = omv * omv * omv; // 仅在真正掠射角亮起，不冲淡正面暗部
 
       const vec3 LkeyFrag = vec3(0.501577, 0.790948, 0.347246);
       const vec3 LrimFrag = vec3(-0.655284, 0.423414, -0.625040);
       vec3 Hkey = normalize(LkeyFrag + V);
       float NdotH = max(dot(N, Hkey), 0.0);
-      // 磨砂柔光（宽）+ 晶面清透高光（窄），忠于主题色仅带极轻清透亮泽
-      float satinSpec = pow(NdotH, 10.0);
-      float crystalSpec = pow(NdotH, 38.0);
-      vec3 crystalTint = mix(vTargetGlow, vec3(1.0), 0.42);
-      vec3 specTint = mix(vTargetGlow, vec3(1.0), 0.62);
+      // 紧致清透的切面玻璃高光（替代宽泛发灰的塑料漫反射高光）
+      float glassSpec = pow(NdotH, 56.0);
+      vec3 deepGemTint = pow(max(vTargetGlow, vec3(0.001)), vec3(1.42));
+      vec3 specTint = mix(vTargetGlow, vec3(1.0), 0.58);
 
       float riseT = smoothstep(0.16, 0.74, normElevation);
       float energyBoost = clamp(riseT + peakClamped * 0.65 + rippleLift * 0.55, 0.0, 1.0);
 
-      // 仅较高柱子显示晶莹棱角描边（低矮柱体完全无描边）
-      float tallOutlineGate = smoothstep(0.30, 0.72, normElevation);
-      tallOutlineGate = clamp(tallOutlineGate + peakClamped * 0.55 + rippleLift * 0.45, 0.0, 1.0);
-      vec3 crystalEdgeCol = mix(
-        mix(vCurrentGlow, vTargetGlow, 0.35) * 1.18,
-        mix(uPeakColor, vec3(1.0), 0.42) * 1.28,
-        clamp(0.28 + peakClamped * 0.52 + idleCrest * 0.25, 0.0, 1.0)
+      // 全柱精细抗锯齿水晶细描边（~1.2px 锐利棱线而非宽糊倒角）：低柱精致克制、高柱晶莹提亮
+      float lineHeightGain = smoothstep(mix(0.08, 0.18, dim), mix(0.50, 0.68, dim), normElevation);
+      float lineStrength = clamp(mix(0.28, 0.18, dim) + lineHeightGain * 0.72 + peakClamped * 0.45 + rippleLift * 0.50, 0.0, 1.0);
+      vec3 hairlineCol = mix(
+        mix(vTargetGlow, vCurrentGlow, 0.35) * 1.18,
+        mix(uPeakColor, vec3(1.0), 0.40) * 1.32,
+        clamp(0.16 + energyBoost * 0.25 + peakClamped * 0.55 + idleCrest * 0.22, 0.0, 1.0)
       );
 
       vec3 finalColor;
 
       if (isTop) {
-        float topIntensity = smoothstep(mix(0.0, 0.08, dim), mix(0.46, 0.64, dim), normElevation) + clamp(peakBlend * 0.45, 0.0, 1.0);
+        float topIntensity = smoothstep(mix(0.02, 0.10, dim), mix(0.48, 0.66, dim), normElevation) + clamp(peakBlend * 0.45, 0.0, 1.0);
         topIntensity *= mix(1.0, 0.86, farSoft);
         float topClamped = clamp(topIntensity, 0.0, 1.0);
 
-        // 低矮柱体也具深色半透萤石/冰晶底韵（不死灰、不扁平）
-        vec3 baseFloorCol = mix(uBaseColor2 * 1.15, uBaseColor1 * 0.92, dim)
-                          + vTargetGlow * mix(0.11, 0.06, dim) * min(uGlowIntensity, 1.35);
-        vec3 darkCrystalCap = mix(baseFloorCol, uBaseColor2 * mix(1.22, 0.95, dim) + vTargetGlow * 0.14, smoothstep(0.0, 0.36, normElevation)) * lowHeightDim;
+        // 深邃高饱和琉璃暗底（不发白发灰，保留通透宝石感）
+        vec3 baseFloorCol = mix(uBaseColor2 * 1.02, uBaseColor1 * 0.84, dim)
+                          + deepGemTint * mix(0.048, 0.024, dim) * min(uGlowIntensity, 1.35);
+        vec3 darkCrystalCap = mix(baseFloorCol, uBaseColor2 * mix(1.12, 0.88, dim) + deepGemTint * 0.075, smoothstep(0.0, 0.38, normElevation)) * lowHeightDim;
 
-        // 升起晶柱顶面：通透柔光晶面，无中心光晕，微弱沿主光方向的透射梯度赋予实体晶体感
+        // 升起晶柱顶面：通透清亮，无中心光晕，微弱斜向透射渐变体现晶面厚度
         vec3 topGlowCol = mix(vCurrentGlow, uPeakColor * 1.24, peakClamped * 0.45 + idleCrest * 0.22);
-        float lightGrad = 0.965 + 0.07 * dot(vUv - 0.5, vec2(0.75, 0.66));
-        vec3 crownCol = topGlowCol * (1.10 + 0.20 * energyBoost) * lightGrad;
+        float lightGrad = 0.96 + 0.08 * dot(vUv - 0.5, vec2(0.75, 0.66));
+        vec3 crownCol = topGlowCol * (1.12 + 0.20 * energyBoost) * lightGrad;
         vec3 capBase = mix(darkCrystalCap, crownCol, topClamped);
 
-        // 磨砂晶面柔润镜面光泽 + 掠射菲涅尔透亮（所有柱体均有细腻水晶质感）
-        capBase += crystalTint * satinSpec * (0.09 + 0.12 * energyBoost) * distFade;
-        capBase += specTint * crystalSpec * (0.14 + 0.18 * energyBoost) * distFade;
-        capBase += crystalTint * fresnelSoft * (0.10 + 0.14 * energyBoost) * distFade;
+        // 紧致玻璃镜面闪烁 + 克制掠射菲涅尔
+        capBase += specTint * glassSpec * (0.20 + 0.22 * energyBoost) * distFade;
+        capBase += mix(vTargetGlow, vec3(1.0), 0.35) * fresnel * (0.14 + 0.16 * energyBoost) * distFade;
 
-        // 仅高柱顶部四条棱线泛出清脆晶体反光描边（低柱 tallOutlineGate == 0 完全无描边）
-        if (tallOutlineGate > 0.001) {
-          float edgeDist = min(min(vUv.x, 1.0 - vUv.x), min(vUv.y, 1.0 - vUv.y));
-          float bevelW = max(0.068, uvFw * 1.45);
-          float outerRim = (1.0 - smoothstep(0.0, bevelW, edgeDist)) * detailFade;
-          capBase += crystalEdgeCol * outerRim * tallOutlineGate * (0.30 + 0.18 * topClamped);
-        }
+        // 精致细描边（锐利抗锯齿细线，远景随 detailFade 自动柔化防噪）
+        float edgeDist = min(min(vUv.x, 1.0 - vUv.x), min(vUv.y, 1.0 - vUv.y));
+        float hairW = max(0.017, uvFw * 1.05);
+        float topHairline = (1.0 - smoothstep(hairW * 0.45, hairW * 1.45, edgeDist)) * detailFade;
+        capBase += hairlineCol * topHairline * lineStrength * (0.46 + 0.24 * energyBoost);
 
         finalColor = capBase;
       } else {
         // 底部沉稳压暗，保持水晶柱群立体接地感（中远景柔化防噪）
         float worldCrevice = smoothstep(0.0, 1.85, vWorldPos.y);
         float relCrevice = smoothstep(0.0, 0.38, relY);
-        float creviceAO = mix(mix(0.54, 0.34, dim), 1.0, max(worldCrevice, relCrevice * 0.62));
+        float creviceAO = mix(mix(0.50, 0.30, dim), 1.0, max(worldCrevice, relCrevice * 0.60));
         creviceAO = mix(creviceAO, mix(creviceAO, 0.88, 0.72), farSoft);
 
-        // 深色晶底向中上部平滑透光过渡（低柱也具备柔润萤石晶身）
-        vec3 deepCrystalRoot = mix(uBaseColor1 * mix(0.95, 0.74, dim), uBaseColor2 * mix(1.24, 0.98, dim), relY * distFade)
-                             + vTargetGlow * (0.05 + 0.08 * relY) * mix(1.0, 0.62, dim) * min(uGlowIntensity, 1.35);
+        // 深邃饱和琉璃柱底（Beer-Lambert 深度饱和，非泛白塑料）
+        vec3 deepCrystalRoot = mix(uBaseColor1 * mix(0.88, 0.68, dim), uBaseColor2 * mix(1.12, 0.88, dim), relY * distFade)
+                             + deepGemTint * (0.022 + 0.055 * relY) * mix(1.0, 0.58, dim) * min(uGlowIntensity, 1.35);
         vec3 bodyColor = deepCrystalRoot * vFaceLight.x * lowHeightDim;
 
-        // 内部由底向上渐强的次表面透光发光（上亮下深）
-        float sideGrad = pow(smoothstep(0.0, 0.98, relY), 0.76);
-        float heightEnergy = pow(max(normElevation, 0.001), mix(0.82, 1.14, dim));
-        float shaftFloor = smoothstep(0.18, 0.76, normElevation) * 0.34 * worldCrevice;
-        float sideGlow = clamp(mix(shaftFloor, 1.0, sideGrad) * heightEnergy * 1.14, 0.0, 1.0);
+        // 内部由底向上渐强的清透发光（底部深邃，中上部通透发亮）
+        float sideGrad = pow(smoothstep(0.0, 0.98, relY), 0.82);
+        float heightEnergy = pow(max(normElevation, 0.001), mix(0.86, 1.18, dim));
+        float shaftFloor = smoothstep(0.20, 0.78, normElevation) * 0.30 * worldCrevice;
+        float sideGlow = clamp(mix(shaftFloor, 1.0, sideGrad) * heightEnergy * 1.12, 0.0, 1.0);
 
         vec3 sideGlowColor = mix(vCurrentGlow, uPeakColor * 1.18, peakClamped * 0.42 + idleCrest * 0.18);
         finalColor = mix(bodyColor, sideGlowColor * vFaceLight.y, sideGlow);
 
-        // 次表面内部透射（磨砂冰晶特有的柔润背光穿透感与掠射透亮）
-        float backTrans = pow(clamp(dot(V, normalize(-LkeyFrag + N * 0.45)), 0.0, 1.0), 2.4);
-        float rimTrans = pow(clamp(dot(V, normalize(-LrimFrag + N * 0.45)), 0.0, 1.0), 2.8);
-        float sssWeight = (0.14 + 0.24 * energyBoost) * (0.35 + 0.65 * relY) * distFade;
-        vec3 sssCol = mix(vTargetGlow, sideGlowColor, 0.55);
-        finalColor += sssCol * (backTrans * 0.55 + rimTrans * 0.35) * sssWeight;
+        // 克制清透的内部逆光透射（仅高穿透方向微亮，保持切面高对比度）
+        float backTrans = pow(clamp(dot(V, normalize(-LkeyFrag + N * 0.42)), 0.0, 1.0), 3.4);
+        float rimTrans = pow(clamp(dot(V, normalize(-LrimFrag + N * 0.42)), 0.0, 1.0), 3.8);
+        float sssWeight = (0.10 + 0.22 * energyBoost) * (0.30 + 0.70 * relY) * distFade;
+        finalColor += mix(deepGemTint, sideGlowColor, 0.62) * (backTrans * 0.55 + rimTrans * 0.35) * sssWeight;
 
-        // 磨砂晶面双层高光 + 掠射菲涅尔半透边缘光（让低柱和高柱都显水晶质感）
-        finalColor += crystalTint * satinSpec * (0.07 + 0.10 * energyBoost) * (0.4 + 0.6 * relY) * distFade;
-        finalColor += specTint * crystalSpec * (0.12 + 0.16 * energyBoost) * (0.4 + 0.6 * relY) * distFade;
-        finalColor += crystalTint * fresnelSoft * (0.09 + 0.14 * energyBoost) * (0.28 + 0.72 * relY) * distFade;
-        finalColor += specTint * fresnel * (0.06 + 0.10 * energyBoost) * relY * distFade;
+        // 紧致玻璃镜面反光 + 掠射菲涅尔
+        finalColor += specTint * glassSpec * (0.16 + 0.20 * energyBoost) * (0.35 + 0.65 * relY) * distFade;
+        finalColor += mix(vTargetGlow, vec3(1.0), 0.38) * fresnel * (0.12 + 0.16 * energyBoost) * relY * distFade;
 
-        // 仅高柱呈现晶莹棱角反光线（顶部定宽微倒角 + 竖向棱线，低柱完全无描边）
-        if (tallOutlineGate > 0.001) {
-          float bevelH = max(0.068, uvFw * totalHeight * 1.35);
-          float rimGlow = smoothstep(bevelH, 0.0, worldDistFromTop) * detailFade * tallOutlineGate;
-          finalColor += crystalEdgeCol * rimGlow * 0.24;
+        // 侧面精细锐利棱线描边（顶沿极细微高光 + 竖向切割细棱线，低柱极克制、高柱晶莹，绝非宽倒角）
+        float topSideW = max(0.022, uvFw * totalHeight * 1.05);
+        float topSideLine = (1.0 - smoothstep(topSideW * 0.45, topSideW * 1.45, worldDistFromTop)) * detailFade;
+        finalColor += hairlineCol * topSideLine * lineStrength * (0.18 + 0.08 * energyBoost);
 
-          float sideEdgeDist = min(vUv.x, 1.0 - vUv.x);
-          float sideBevel = (1.0 - smoothstep(0.0, max(0.055, uvFw * 1.45), sideEdgeDist)) * detailFade * tallOutlineGate;
-          finalColor += crystalEdgeCol * sideBevel * (0.24 + 0.14 * relY) * creviceAO * distFade;
-        }
+        float sideEdgeDist = min(vUv.x, 1.0 - vUv.x);
+        float sideHairW = max(0.015, uvFw * 1.05);
+        float sideHairline = (1.0 - smoothstep(sideHairW * 0.45, sideHairW * 1.45, sideEdgeDist)) * detailFade;
+        finalColor += hairlineCol * sideHairline * lineStrength * (0.20 + 0.22 * energyBoost) * (0.40 + 0.60 * relY) * creviceAO * distFade;
 
         finalColor *= creviceAO;
       }
@@ -909,9 +900,9 @@ const FloorDiscMaterial = createShaderMaterial(
       float midW = max(0.0, 1.0 - innerW - outerW);
       vec3 localThemeCol = uWarmCore * innerW + uMidCore * midW + uCoolCore * outerW;
 
-      // 略微压暗的主体底色：与柱底平滑衔接，彻底消除轴向黑缝
-      vec3 floorCol = mix(uBaseColor1 * 1.02, uBaseColor2 * 1.24, mix(0.62, 0.34, dim))
-                    + localThemeCol * mix(0.095, 0.052, dim) * glowCap;
+      // 略微压暗的主体底色：暗谷处克制不发亮，与柱底自然融合
+      vec3 floorCol = mix(uBaseColor1 * 0.85, uBaseColor2 * 1.02, mix(0.50, 0.25, dim))
+                    + localThemeCol * mix(0.042, 0.022, dim) * glowCap;
 
       // 邻近升起高柱与峰值的缝隙漫反射余光（避免高亮柱群与俯视中出现深色十字/竖缝）
       float localElev = 0.0;
@@ -935,8 +926,8 @@ const FloorDiscMaterial = createShaderMaterial(
       float tallGate = smoothstep(0.45, 0.78, localPeak);
       float peakClamped = clamp(pow(localPeak, 0.85) * tallGate * uPeakEnabled * uPeakIntensity, 0.0, 1.0);
       vec3 bounceCol = mix(localThemeCol, uPeakColor * 1.15, peakClamped * 0.78);
-      float bounceT = smoothstep(0.28, 4.6, localElev);
-      floorCol = mix(floorCol, bounceCol * glowCap * mix(0.68, 0.52, dim), bounceT * 0.78);
+      float bounceT = smoothstep(0.75, 4.8, localElev);
+      floorCol = mix(floorCol, bounceCol * glowCap * mix(0.62, 0.46, dim), bounceT * 0.76);
 
       if (aerialFog > 0.001) {
         float horizonGlowT = smoothstep(0.45, 1.0, aerialFog);

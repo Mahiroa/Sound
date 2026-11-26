@@ -211,7 +211,7 @@ const TerrainSceneInner = le.forwardRef(
     const floorGeo = le.useMemo(() => {
       const g = new CircleGeometry(Math.max(1, W - F * 0.75), 64);
       g.rotateX(-Math.PI / 2);
-      g.translate(0, 0.35, 0);
+      g.translate(0, 0.20, 0);
       return g;
     }, [W, F]);
     const fsTriGeo = le.useMemo(() => createFullscreenTriangleGeometry(), []);

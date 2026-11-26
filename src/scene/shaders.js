@@ -708,19 +708,25 @@ const MapShaderMaterial = createShaderMaterial(
       // 紧致清透的切面玻璃高光（替代宽泛发灰的塑料漫反射高光）
       float glassSpec = pow(NdotH, 56.0);
       vec3 deepGemTint = pow(max(vTargetGlow, vec3(0.001)), vec3(1.42));
-      vec3 specTint = mix(vTargetGlow, vec3(1.0), 0.58);
 
       float riseT = smoothstep(0.16, 0.74, normElevation);
       float energyBoost = clamp(riseT + peakClamped * 0.65 + rippleLift * 0.55, 0.0, 1.0);
 
-      // 全柱精细抗锯齿水晶细描边（~1.2px 锐利棱线而非宽糊倒角）：低柱精致克制、高柱晶莹提亮
-      float lineHeightGain = smoothstep(mix(0.08, 0.18, dim), mix(0.50, 0.68, dim), normElevation);
-      float lineStrength = clamp(mix(0.28, 0.18, dim) + lineHeightGain * 0.72 + peakClamped * 0.45 + rippleLift * 0.50, 0.0, 1.0);
-      vec3 hairlineCol = mix(
-        mix(vTargetGlow, vCurrentGlow, 0.35) * 1.18,
-        mix(uPeakColor, vec3(1.0), 0.40) * 1.32,
-        clamp(0.16 + energyBoost * 0.25 + peakClamped * 0.55 + idleCrest * 0.22, 0.0, 1.0)
-      );
+      // 全柱精细抗锯齿水晶细描边（~1.2px 锐利棱线）：颜色严格跟随柱体主体色与峰值/波纹高亮，不泛白、不串色
+      float highlightFollow = smoothstep(0.10, 0.56, normElevation + rippleLift * 0.75 + peakClamped * 0.85);
+      vec3 pillarEdgeSrc = mix(vTargetGlow, vCurrentGlow, highlightFollow);
+      pillarEdgeSrc = mix(pillarEdgeSrc, uPeakColor * 1.18, clamp(peakClamped * 0.78 + idleCrest * 0.20, 0.0, 0.92));
+      pillarEdgeSrc += vRippleAdd * 0.42;
+
+      float edgeMaxC = max(max(pillarEdgeSrc.r, pillarEdgeSrc.g), max(pillarEdgeSrc.b, 0.001));
+      vec3 normEdgeHue = clamp(pillarEdgeSrc / edgeMaxC, 0.0, 1.0);
+      vec3 luminousEdgeHue = clamp(pow(normEdgeHue + vec3(0.035), vec3(0.62)), 0.0, 1.0);
+      vec3 specTint = mix(luminousEdgeHue, vec3(1.0), 0.28);
+
+      float lineHeightGain = smoothstep(mix(0.06, 0.16, dim), mix(0.52, 0.70, dim), normElevation);
+      float lineStrength = clamp(mix(0.38, 0.26, dim) + lineHeightGain * 0.62 + peakClamped * 0.35 + rippleLift * 0.42, 0.0, 1.0);
+      vec3 hairlineCol = mix(normEdgeHue, luminousEdgeHue, clamp(0.18 + energyBoost * 0.58 + peakClamped * 0.28 + rippleLift * 0.25, 0.0, 1.0))
+                       * clamp(uGlowIntensity, 0.72, 1.32) * distFade;
 
       vec3 finalColor;
 
@@ -740,15 +746,15 @@ const MapShaderMaterial = createShaderMaterial(
         vec3 crownCol = topGlowCol * (1.12 + 0.20 * energyBoost) * lightGrad;
         vec3 capBase = mix(darkCrystalCap, crownCol, topClamped);
 
-        // 紧致玻璃镜面闪烁 + 克制掠射菲涅尔
+        // 紧致玻璃镜面闪烁 + 同色系克制掠射菲涅尔
         capBase += specTint * glassSpec * (0.20 + 0.22 * energyBoost) * distFade;
-        capBase += mix(vTargetGlow, vec3(1.0), 0.35) * fresnel * (0.14 + 0.16 * energyBoost) * distFade;
+        capBase += luminousEdgeHue * fresnel * (0.14 + 0.16 * energyBoost) * distFade;
 
-        // 精致细描边（锐利抗锯齿细线，远景随 detailFade 自动柔化防噪）
+        // 精致细描边（锐利抗锯齿细线，跟随主体色与高亮色，远景随 detailFade 自动柔化防噪）
         float edgeDist = min(min(vUv.x, 1.0 - vUv.x), min(vUv.y, 1.0 - vUv.y));
         float hairW = max(0.017, uvFw * 1.05);
         float topHairline = (1.0 - smoothstep(hairW * 0.45, hairW * 1.45, edgeDist)) * detailFade;
-        capBase += hairlineCol * topHairline * lineStrength * (0.46 + 0.24 * energyBoost);
+        capBase += hairlineCol * topHairline * lineStrength * (0.48 + 0.16 * energyBoost);
 
         finalColor = capBase;
       } else {
@@ -778,19 +784,19 @@ const MapShaderMaterial = createShaderMaterial(
         float sssWeight = (0.10 + 0.22 * energyBoost) * (0.30 + 0.70 * relY) * distFade;
         finalColor += mix(deepGemTint, sideGlowColor, 0.62) * (backTrans * 0.55 + rimTrans * 0.35) * sssWeight;
 
-        // 紧致玻璃镜面反光 + 掠射菲涅尔
+        // 紧致玻璃镜面反光 + 同色系掠射菲涅尔
         finalColor += specTint * glassSpec * (0.16 + 0.20 * energyBoost) * (0.35 + 0.65 * relY) * distFade;
-        finalColor += mix(vTargetGlow, vec3(1.0), 0.38) * fresnel * (0.12 + 0.16 * energyBoost) * relY * distFade;
+        finalColor += luminousEdgeHue * fresnel * (0.12 + 0.16 * energyBoost) * relY * distFade;
 
-        // 侧面精细锐利棱线描边（顶沿极细微高光 + 竖向切割细棱线，低柱极克制、高柱晶莹，绝非宽倒角）
+        // 侧面精细锐利棱线描边（随主体色/高亮色及受光面自然变化，绝非纯白描边）
         float topSideW = max(0.022, uvFw * totalHeight * 1.05);
         float topSideLine = (1.0 - smoothstep(topSideW * 0.45, topSideW * 1.45, worldDistFromTop)) * detailFade;
-        finalColor += hairlineCol * topSideLine * lineStrength * (0.18 + 0.08 * energyBoost);
+        finalColor += hairlineCol * topSideLine * lineStrength * (0.20 + 0.10 * energyBoost) * vFaceLight.y;
 
         float sideEdgeDist = min(vUv.x, 1.0 - vUv.x);
         float sideHairW = max(0.015, uvFw * 1.05);
         float sideHairline = (1.0 - smoothstep(sideHairW * 0.45, sideHairW * 1.45, sideEdgeDist)) * detailFade;
-        finalColor += hairlineCol * sideHairline * lineStrength * (0.20 + 0.22 * energyBoost) * (0.40 + 0.60 * relY) * creviceAO * distFade;
+        finalColor += hairlineCol * sideHairline * lineStrength * (0.26 + 0.20 * energyBoost) * (0.38 + 0.62 * relY) * vFaceLight.y * creviceAO;
 
         finalColor *= creviceAO;
       }

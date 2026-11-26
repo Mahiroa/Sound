@@ -42,7 +42,7 @@
         "step": 5,
         "text": "水平角度 / Horizontal Angle",
         "type": "slider",
-        "value": 120
+        "value": 135
       },
       "cameraAngleY": {
         "index": 34,
@@ -52,7 +52,7 @@
         "step": 5,
         "text": "垂直仰角 / Vertical Angle",
         "type": "slider",
-        "value": 25
+        "value": 20
       },
       "cameraDistance": {
         "index": 32,
@@ -62,7 +62,7 @@
         "step": 5,
         "text": "视角距离 / Camera Distance",
         "type": "slider",
-        "value": 85
+        "value": 70
       },
       "clockColor": {
         "index": 49,
@@ -293,6 +293,14 @@
         "index": 2,
         "options": [
           {
+            "label": "80x80",
+            "value": 80
+          },
+          {
+            "label": "96x96 (推荐 / Recommended)",
+            "value": 96
+          },
+          {
             "label": "120x120",
             "value": 120
           },
@@ -316,7 +324,7 @@
         "order": 102,
         "text": "渲染精度 / Render Resolution",
         "type": "combo",
-        "value": 120
+        "value": 96
       },
       "idleWaveDebounce": {
         "index": 28,

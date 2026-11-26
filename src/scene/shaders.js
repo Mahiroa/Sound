@@ -225,20 +225,22 @@ const HeightfieldSimMaterial = createShaderMaterial(
       float range = uResponseRange;
       float falloffT = smoothstep(uHalfExtent * 0.32 * range, uHalfExtent * 0.90 * range, centerDist);
       float globalFalloff = mix(1.0, 0.76, falloffT);
+      // 圆盘最外圈平滑收坡，避免地平线边缘出现突兀锯齿柱墙
+      float outerSkirt = mix(0.28, 1.0, smoothstep(uHalfExtent, uHalfExtent * 0.80, centerDist));
 
-      // 1. 空闲涌动（仅在 uIdleWave > 0.001 时计算 2 次基础 snoise，有声播放时直接省 2 次噪声）
+      // 1. 空闲涌动（舒展大波长起伏 + 极低逐柱抖动，消除远景细碎噪点）
       float idleElevation = 0.0;
       float idleBlockWave = 0.0;
       if (uIdleWave > 0.001) {
-        vec2 movingPos = pos2D * 0.048 + vec2(uTime * 0.085, uTime * 0.045);
+        vec2 movingPos = pos2D * 0.034 + vec2(uTime * 0.075, uTime * 0.040);
         float baseNoise = (snoise(movingPos) + 1.0) * 0.5;
-        float wave = snoise(pos2D * 0.115 - vec2(uTime * 0.11, -uTime * 0.065)) * 0.5 + 0.5;
-        float swellA = sin(pos2D.x * 0.055 + pos2D.y * 0.032 - uTime * 0.42 + baseNoise * 2.2) * 0.5 + 0.5;
-        float swellB = sin(centerDist * 0.085 - uTime * 0.55 + wave * 1.4) * 0.5 + 0.5;
-        idleElevation = mix(baseNoise, wave, uSmoothness * 0.5 + 0.2) * 0.72 * globalFalloff * uIdleWave;
-        float combinedWave = baseNoise * 0.38 + wave * 0.24 + swellA * 0.24 + swellB * 0.14 + (rnd - 0.5) * 0.14;
-        combinedWave = smoothstep(0.12, 0.90, combinedWave);
-        idleBlockWave = combinedWave * uIdleWave * 2.85 * globalFalloff;
+        float wave = snoise(pos2D * 0.068 - vec2(uTime * 0.095, -uTime * 0.055)) * 0.5 + 0.5;
+        float swellA = sin(pos2D.x * 0.042 + pos2D.y * 0.026 - uTime * 0.38 + baseNoise * 1.9) * 0.5 + 0.5;
+        float swellB = sin(centerDist * 0.062 - uTime * 0.48 + wave * 1.2) * 0.5 + 0.5;
+        idleElevation = mix(baseNoise, wave, uSmoothness * 0.5 + 0.2) * 0.72 * globalFalloff * outerSkirt * uIdleWave;
+        float combinedWave = baseNoise * 0.42 + wave * 0.22 + swellA * 0.22 + swellB * 0.14 + (rnd - 0.5) * 0.035;
+        combinedWave = smoothstep(0.14, 0.88, combinedWave);
+        idleBlockWave = combinedWave * uIdleWave * 2.85 * globalFalloff * outerSkirt;
       }
 
       // 2. 分层频段地形响应（内核 SubBass -> 内环 Bass -> 全场 LowMid -> 中环流河 Mid -> 外环尖刺 HighMid -> 外缘星光 Treble）
@@ -293,7 +295,7 @@ const HeightfieldSimMaterial = createShaderMaterial(
           energyBounce += sin(energyRaw * 6.283 * 2.0) * exp(-energyRaw * 5.0) * 0.2;
           audioElevation += energyBounce * 4.8 * uAudioIntensity;
         }
-        audioElevation *= globalFalloff;
+        audioElevation *= globalFalloff * outerSkirt;
       }
 
       float subPeak = clamp(subLift / 4.8, 0.0, 1.0);
@@ -487,19 +489,20 @@ const MapShaderMaterial = createShaderMaterial(
         float range = uResponseRange;
         float falloffT = smoothstep(uHalfExtent * 0.32 * range, uHalfExtent * 0.90 * range, centerDist);
         float globalFalloff = mix(1.0, 0.76, falloffT);
+        float outerSkirt = mix(0.28, 1.0, smoothstep(uHalfExtent, uHalfExtent * 0.80, centerDist));
 
         float idleElevation = 0.0;
         float idleBlockWave = 0.0;
         if (uIdleWave > 0.001) {
-          vec2 movingPos = pos2D * 0.048 + vec2(uTime * 0.085, uTime * 0.045);
+          vec2 movingPos = pos2D * 0.034 + vec2(uTime * 0.075, uTime * 0.040);
           float baseNoise = (snoise(movingPos) + 1.0) * 0.5;
-          float wave = snoise(pos2D * 0.115 - vec2(uTime * 0.11, -uTime * 0.065)) * 0.5 + 0.5;
-          float swellA = sin(pos2D.x * 0.055 + pos2D.y * 0.032 - uTime * 0.42 + baseNoise * 2.2) * 0.5 + 0.5;
-          float swellB = sin(centerDist * 0.085 - uTime * 0.55 + wave * 1.4) * 0.5 + 0.5;
-          idleElevation = mix(baseNoise, wave, uSmoothness * 0.5 + 0.2) * 0.72 * globalFalloff * uIdleWave;
-          float combinedWave = baseNoise * 0.38 + wave * 0.24 + swellA * 0.24 + swellB * 0.14 + (rnd - 0.5) * 0.14;
-          combinedWave = smoothstep(0.12, 0.90, combinedWave);
-          idleBlockWave = combinedWave * uIdleWave * 2.85 * globalFalloff;
+          float wave = snoise(pos2D * 0.068 - vec2(uTime * 0.095, -uTime * 0.055)) * 0.5 + 0.5;
+          float swellA = sin(pos2D.x * 0.042 + pos2D.y * 0.026 - uTime * 0.38 + baseNoise * 1.9) * 0.5 + 0.5;
+          float swellB = sin(centerDist * 0.062 - uTime * 0.48 + wave * 1.2) * 0.5 + 0.5;
+          idleElevation = mix(baseNoise, wave, uSmoothness * 0.5 + 0.2) * 0.72 * globalFalloff * outerSkirt * uIdleWave;
+          float combinedWave = baseNoise * 0.42 + wave * 0.22 + swellA * 0.22 + swellB * 0.14 + (rnd - 0.5) * 0.035;
+          combinedWave = smoothstep(0.14, 0.88, combinedWave);
+          idleBlockWave = combinedWave * uIdleWave * 2.85 * globalFalloff * outerSkirt;
         }
 
         float subRegion = smoothstep(uHalfExtent * 0.24 * range, 0.0, centerDist);
@@ -530,7 +533,7 @@ const MapShaderMaterial = createShaderMaterial(
           energyBounce += sin(energyRaw * 6.283 * 2.0) * exp(-energyRaw * 5.0) * 0.2;
           audioElevation += energyBounce * 4.8 * uAudioIntensity;
         }
-        audioElevation *= globalFalloff;
+        audioElevation *= globalFalloff * outerSkirt;
 
         float subPeak = clamp(subLift / 4.8, 0.0, 1.0);
         float globalPeak = clamp((audioElevation - 3.8) / 5.2, 0.0, 1.0);
@@ -588,7 +591,16 @@ const MapShaderMaterial = createShaderMaterial(
       targetGlow = mix(targetGlow, crispCyan, uBrightness * 0.45);
       vTargetGlow = targetGlow;
 
-      float distFade = mix(1.0, 0.68, smoothstep(uHalfExtent, uHalfExtent * 1.12, centerDist));
+      // 基于相机真实距离的空气透视与圆盘外缘柔化（纯俯视自动减弱雾气以保持全盘清晰）
+      float camOriginDist = max(length(cameraPosition), 1.0);
+      float camDist = length(cameraPosition - worldPos);
+      float grazing = 1.0 - smoothstep(0.58, 0.94, cameraPosition.y / camOriginDist);
+      float fogStart = camOriginDist * 0.68;
+      float fogEnd = camOriginDist + uHalfExtent * 0.82;
+      float camFogT = smoothstep(fogStart, fogEnd, camDist);
+      float diskEdgeFade = smoothstep(uHalfExtent * 0.76, uHalfExtent * 0.995, centerDist);
+
+      float distFade = mix(1.0, 0.66, clamp(camFogT * 0.82 * grazing + diskEdgeFade * 0.35, 0.0, 1.0));
       float dim = clamp(uLowPillarDim, 0.0, 1.0);
       float heightPow = pow(normElevation, mix(0.85, 1.48, dim));
       vec3 glowBase = mix(uBaseColor2 * 1.05, uBaseColor1 * 0.82, dim);
@@ -610,7 +622,7 @@ const MapShaderMaterial = createShaderMaterial(
       float lowHeightDim = mix(mix(1.0, 0.56, dim), 1.0, smoothstep(0.05, 0.48, normElevation));
       lowHeightDim = mix(lowHeightDim, 1.0, clamp(rippleLift * 1.35, 0.0, 1.0));
       float idleCrest = smoothstep(0.44, 0.92, normElevation) * uIdleWave * uPeakEnabled * uPeakIntensity;
-      float aerialFog = smoothstep(uHalfExtent, uHalfExtent * 1.22, centerDist);
+      float aerialFog = clamp(max(camFogT * grazing, diskEdgeFade * 0.85), 0.0, 1.0);
 
       vPillarA = vec4(normElevation, lowHeightDim, distFade, peakClamped);
       vPillarB = vec4(rippleLift, idleCrest, aerialFog, peakBlend);
@@ -641,6 +653,7 @@ const MapShaderMaterial = createShaderMaterial(
     uniform vec3 uCoolCore;
     uniform vec3 uWarmCore;
     uniform vec3 uPeakColor;
+    uniform float uGlowIntensity;
     uniform float uLowPillarDim;
 
     in vec2 vUv;
@@ -675,9 +688,10 @@ const MapShaderMaterial = createShaderMaterial(
       float peakBlend     = vPillarB.w;
       float dim = clamp(uLowPillarDim, 0.0, 1.0);
 
-      // 抗锯齿屏幕空间导数
+      // 抗锯齿屏幕空间导数 + 中远景高频细节提前收拢（杜绝远景蜂窝颗粒与摩尔纹）
       float uvFw = max(fwidth(vUv.x), fwidth(vUv.y));
-      float detailFade = 1.0 - smoothstep(0.08, 0.34, uvFw);
+      float farSoft = clamp(max(smoothstep(0.055, 0.18, uvFw), smoothstep(0.18, 0.72, aerialFog)), 0.0, 1.0);
+      float detailFade = (1.0 - smoothstep(0.032, 0.135, uvFw)) * (1.0 - smoothstep(0.16, 0.60, aerialFog));
 
       // 菲涅尔（乘法替代 pow(x, 3.0) 省超越指令）
       float omv = 1.0 - max(dot(N, V), 0.0);
@@ -688,6 +702,7 @@ const MapShaderMaterial = createShaderMaterial(
 
       if (isTop) {
         float topIntensity = smoothstep(mix(0.0, 0.10, dim), mix(0.48, 0.68, dim), normElevation) + clamp(peakBlend * 0.45, 0.0, 1.0);
+        topIntensity *= mix(1.0, 0.84, farSoft);
         float edgeDist = min(min(vUv.x, 1.0 - vUv.x), min(vUv.y, 1.0 - vUv.y));
         float bevelW = max(0.075, uvFw * 1.5);
         float outerRim = (1.0 - smoothstep(0.0, bevelW, edgeDist)) * detailFade;
@@ -706,10 +721,11 @@ const MapShaderMaterial = createShaderMaterial(
 
         finalColor = capBase;
       } else {
-        // 锚定世界高度的物理缝隙遮蔽（单次乘算，高柱腰部零纯黑断层）
+        // 锚定世界高度的物理缝隙遮蔽（中远景柔化黑缝，使柱群自然融合成连贯起伏波面）
         float worldCrevice = smoothstep(0.0, 1.85, vWorldPos.y);
         float relCrevice = smoothstep(0.0, 0.38, vRelativeY);
         float creviceAO = mix(mix(0.56, 0.34, dim), 1.0, max(worldCrevice, relCrevice * 0.60));
+        creviceAO = mix(creviceAO, mix(creviceAO, 0.88, 0.72), farSoft);
 
         vec3 bodyColor = mix(uBaseColor1 * mix(0.95, 0.72, dim), uBaseColor2 * mix(1.22, 0.96, dim), vRelativeY * distFade);
         bodyColor *= vFaceLight.x * lowHeightDim;
@@ -723,7 +739,7 @@ const MapShaderMaterial = createShaderMaterial(
         finalColor = mix(bodyColor, sideGlowColor * vFaceLight.y, sideGlow);
 
         float rimFloor = mix(0.14, 0.0, dim);
-        float rimGlow = smoothstep(0.042, 0.0, distFromTop) * clamp(rimFloor + smoothstep(mix(0.02, 0.10, dim), mix(0.48, 0.64, dim), normElevation) * (1.0 - rimFloor) + rippleLift * 0.6, 0.0, 1.0);
+        float rimGlow = smoothstep(0.042, 0.0, distFromTop) * detailFade * clamp(rimFloor + smoothstep(mix(0.02, 0.10, dim), mix(0.48, 0.64, dim), normElevation) * (1.0 - rimFloor) + rippleLift * 0.6, 0.0, 1.0);
         finalColor += mix(vCurrentGlow, uPeakColor * 1.25, peakClamped * 0.42 + idleCrest * 0.28) * rimGlow * 0.90;
 
         float sideEdgeDist = min(vUv.x, 1.0 - vUv.x);
@@ -738,8 +754,14 @@ const MapShaderMaterial = createShaderMaterial(
       finalColor += vRippleAdd;
 
       if (aerialFog > 0.001) {
-        vec3 atmosphericColor = mix(uBaseColor1, uBaseColor2, 0.45);
-        finalColor = mix(finalColor, atmosphericColor, aerialFog * 0.52);
+        float glowCap = min(uGlowIntensity, 1.38);
+        // 越靠近地平线，雾色越贴合天空地平线辉光，避免远端出现生硬黑边
+        float horizonGlowT = smoothstep(0.45, 1.0, aerialFog);
+        vec3 atmosphericColor = mix(uBaseColor1 * 0.75, uBaseColor2 * 0.92, 0.45)
+                              + mix(uCoolCore, uWarmCore, 0.40) * (0.055 + 0.075 * horizonGlowT) * glowCap;
+        float fogStrength = pow(aerialFog, 1.38) * 0.86;
+        fogStrength *= (1.0 - peakClamped * 0.16 - rippleLift * 0.14);
+        finalColor = mix(finalColor, atmosphericColor, clamp(fogStrength, 0.0, 0.92));
       }
 
       finalColor = acesSoft(finalColor * 1.10);

@@ -13,6 +13,7 @@ import {
   Box3,
   BufferAttribute,
   BufferGeometry,
+  CircleGeometry,
   Color as se,
   DoubleSide,
   HalfFloatType,
@@ -43,6 +44,7 @@ import {
   StaticPillarBakeMaterial,
   HeightfieldSimMaterial,
   MapShaderMaterial,
+  FloorDiscMaterial,
   SkyShaderMaterial,
   MeteorShaderMaterial,
   SparkShaderMaterial,
@@ -206,6 +208,12 @@ const TerrainSceneInner = le.forwardRef(
 
     // 共享几何体与材质（统一缓存与生命周期释放）
     const pillarGeo = le.useMemo(() => createOpenBottomPillarGeometry(P), [P]);
+    const floorGeo = le.useMemo(() => {
+      const g = new CircleGeometry(Math.max(1, W - F * 0.75), 64);
+      g.rotateX(-Math.PI / 2);
+      g.translate(0, 0.35, 0);
+      return g;
+    }, [W, F]);
     const fsTriGeo = le.useMemo(() => createFullscreenTriangleGeometry(), []);
     const cometGeo = le.useMemo(() => createCometGeometry(), []);
     const sparkGeo = le.useMemo(() => new OctahedronGeometry(0.28, 0), []);
@@ -215,8 +223,9 @@ const TerrainSceneInner = le.forwardRef(
       return g;
     }, []);
 
-    // 单一共享 MapShaderMaterial（所有空间瓦片共用，0 着色器切换）
+    // 单一共享 MapShaderMaterial 与 Early-Z 主题暗底圆盘材质
     const mapMat = le.useMemo(() => new MapShaderMaterial(), []);
+    const floorMat = le.useMemo(() => new FloorDiscMaterial(), []);
 
     // 4×4 空间瓦片：16B 紧凑实例属性 aInstPos + 精确包围球支持真实视锥剔除与从近到远排序
     const tiles = le.useMemo(() => {
@@ -350,6 +359,7 @@ const TerrainSceneInner = le.forwardRef(
       [fboPipe],
     );
     le.useEffect(() => () => pillarGeo.dispose(), [pillarGeo]);
+    le.useEffect(() => () => floorGeo.dispose(), [floorGeo]);
     le.useEffect(
       () => () => {
         fsTriGeo.dispose();
@@ -357,8 +367,9 @@ const TerrainSceneInner = le.forwardRef(
         sparkGeo.dispose();
         shockRingGeo.dispose();
         mapMat.dispose();
+        floorMat.dispose();
       },
-      [fsTriGeo, cometGeo, sparkGeo, shockRingGeo, mapMat],
+      [fsTriGeo, cometGeo, sparkGeo, shockRingGeo, mapMat, floorMat],
     );
     le.useEffect(
       () => () => {
@@ -1114,7 +1125,7 @@ const TerrainSceneInner = le.forwardRef(
         qe.uResponseRange = r;
       }
 
-      // MapShaderMaterial 共享色算 uniform 同步
+      // MapShaderMaterial 与 FloorDiscMaterial 共享色算 uniform 同步
       qe.uPeakEnabled = v ? 1 : 0;
       qe.uPeakIntensity = y;
       qe.uLowPillarDim = lpd;
@@ -1123,15 +1134,30 @@ const TerrainSceneInner = le.forwardRef(
       qe.uIdleWave = idleVal;
       qe.uHalfExtent = W;
 
-      // 6. Early-Z 全屏单三角形天空（CPU 预计算 6 组旋转三角函数）
+      floorMat.uUseFbo = qe.uUseFbo;
+      floorMat.uSimTex0 = qe.uSimTex0;
+      floorMat.uHalfExtent = W;
+      floorMat.uGridStep = F;
+      floorMat.uGridSize = m;
+      floorMat.uPeakEnabled = qe.uPeakEnabled;
+      floorMat.uPeakIntensity = qe.uPeakIntensity;
+      floorMat.uLowPillarDim = lpd;
+      floorMat.uEnergy = nt.energy;
+      if (colorDirty) {
+        floorMat.uBaseColor1.copy(qe.uBaseColor1);
+        floorMat.uBaseColor2.copy(qe.uBaseColor2);
+        floorMat.uCoolCore.copy(qe.uCoolCore);
+        floorMat.uMidCore.copy(qe.uMidCore);
+        floorMat.uWarmCore.copy(qe.uWarmCore);
+        floorMat.uPeakColor.copy(qe.uPeakColor);
+        floorMat.uGlowIntensity = qe.uGlowIntensity;
+      }
+
+      // 6. Early-Z 全屏单三角形天空（视角自适应圆盘曲率地平线 + 全屏主题暗底，CPU 预计算旋转）
       if (sb.current) {
-        const cp = A.position,
-          cy = cp.y - 0.5,
-          hh = Math.hypot(cp.x, cp.z);
-        const horizonDirY = -cy / Math.hypot(cy, hh + W);
         const su = sb.current.uniforms;
         su.uTime.value = elapsed;
-        su.uHorizon.value = horizonDirY;
+        su.uHalfExtent.value = W;
         su.uInvProj.value.copy(A.projectionMatrixInverse);
         su.uCamRot.value.copy(camRotMat3.setFromMatrix4(A.matrixWorld));
 
@@ -1151,6 +1177,7 @@ const TerrainSceneInner = le.forwardRef(
 
         if (colorDirty) {
           su.uFogColor.value.copy(qe.uBaseColor1);
+          su.uBaseColor2.value.copy(qe.uBaseColor2);
           su.uNebulaA.value.copy(qe.uCoolCore);
           su.uNebulaB.value.copy(qe.uWarmCore);
           su.uPeakColor.value.copy(qe.uPeakColor);
@@ -1201,7 +1228,14 @@ const TerrainSceneInner = le.forwardRef(
             tile.id,
           ),
         ),
-        // 2. 全屏单三角形 Early-Z 天空（排在地形柱之后，被遮挡区域零片元计算）
+        // 1B. Early-Z 主题暗底承托圆盘（排在柱群之后、天空之前，消除轴向对齐黑缝且零过绘）
+        Dt.jsx("mesh", {
+          geometry: floorGeo,
+          material: floorMat,
+          frustumCulled: !1,
+          renderOrder: 28,
+        }),
+        // 2. 全屏单三角形 Early-Z 天空（排在地形柱与底盘之后，被遮挡区域零片元计算）
         Dt.jsx("mesh", {
           geometry: fsTriGeo,
           renderOrder: 30,

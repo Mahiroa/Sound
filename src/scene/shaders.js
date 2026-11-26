@@ -3,7 +3,8 @@
 //   - StaticPillarBakeMaterial 一次性静态预烘焙（centerDist, rnd, riverNoise, colorVar）
 //   - HeightfieldSimMaterial   160×160 离屏高度场模拟（每柱仅算 1 次噪声+波纹，GPU ALU -95%）
 //   - MapShaderMaterial        3D 音域地形柱（16B 紧凑实例属性、逐柱色算前移顶点、精简片元）
-//   - SkyShaderMaterial        全屏单三角形 Early-Z 天空（CPU 外提旋转三角函数、零过绘）
+//   - FloorDiscMaterial        Early-Z 主题暗底承托圆盘（消除轴向对齐黑缝，与地形共享空气透视）
+//   - SkyShaderMaterial        全屏单三角形 Early-Z 天空（视角自适应曲率地平线 + 全屏主题暗底，零黑边裁剪）
 //   - MeteorShaderMaterial     炽热等离子彗星流星
 //   - SparkShaderMaterial      流星撞击火花/余烬
 //   - ShockRingMaterial        流星撞击地面光环冲击波
@@ -443,7 +444,7 @@ const MapShaderMaterial = createShaderMaterial(
 
     out vec2 vUv;
     out vec3 vNormal;
-    out float vRelativeY;
+    out vec2 vHeightInfo; // x=relativeY, y=totalHeight
     out vec3 vWorldPos;
     // 逐柱不变量前移顶点着色器（避免每帧数百万次片元重复计算）
     out vec3 vCurrentGlow;
@@ -567,8 +568,8 @@ const MapShaderMaterial = createShaderMaterial(
 
       // 顶点位移（无 mat4 矩阵乘法，直接平移 x/z 与拉伸 y）
       float yPos = position.y + 0.5;
-      vRelativeY = yPos;
       float totalHeight = 1.0 + elevation;
+      vHeightInfo = vec2(yPos, totalHeight);
       vec3 worldPos = vec3(position.x + pos2D.x, yPos * totalHeight, position.z + pos2D.y);
       vWorldPos = worldPos;
       gl_Position = projectionMatrix * viewMatrix * vec4(worldPos, 1.0);
@@ -658,7 +659,7 @@ const MapShaderMaterial = createShaderMaterial(
 
     in vec2 vUv;
     in vec3 vNormal;
-    in float vRelativeY;
+    in vec2 vHeightInfo;
     in vec3 vWorldPos;
     in vec3 vCurrentGlow;
     in vec3 vTargetGlow;
@@ -676,7 +677,9 @@ const MapShaderMaterial = createShaderMaterial(
       vec3 N = vNormal;
       vec3 V = normalize(cameraPosition - vWorldPos);
       bool isTop = N.y > 0.5;
-      float distFromTop = 1.0 - vRelativeY;
+      float relY = vHeightInfo.x;
+      float totalHeight = vHeightInfo.y;
+      float worldDistFromTop = (1.0 - relY) * totalHeight;
 
       float normElevation = vPillarA.x;
       float lowHeightDim  = vPillarA.y;
@@ -693,60 +696,111 @@ const MapShaderMaterial = createShaderMaterial(
       float farSoft = clamp(max(smoothstep(0.055, 0.18, uvFw), smoothstep(0.18, 0.72, aerialFog)), 0.0, 1.0);
       float detailFade = (1.0 - smoothstep(0.032, 0.135, uvFw)) * (1.0 - smoothstep(0.16, 0.60, aerialFog));
 
-      // 菲涅尔（乘法替代 pow(x, 3.0) 省超越指令）
-      float omv = 1.0 - max(dot(N, V), 0.0);
-      float fresnel = omv * omv * omv;
-      vec3 rimLightCol = mix(uCoolCore, uWarmCore, 0.35);
+      // 磨砂冰晶/萤石光学项：双层菲涅尔 + 主光/背光方向 + 柔润晶面高光
+      float NdotV = max(dot(N, V), 0.0);
+      float omv = 1.0 - NdotV;
+      float fresnelSoft = omv * omv;
+      float fresnel = fresnelSoft * omv;
+
+      const vec3 LkeyFrag = vec3(0.501577, 0.790948, 0.347246);
+      const vec3 LrimFrag = vec3(-0.655284, 0.423414, -0.625040);
+      vec3 Hkey = normalize(LkeyFrag + V);
+      float NdotH = max(dot(N, Hkey), 0.0);
+      // 磨砂柔光（宽）+ 晶面清透高光（窄），忠于主题色仅带极轻清透亮泽
+      float satinSpec = pow(NdotH, 10.0);
+      float crystalSpec = pow(NdotH, 38.0);
+      vec3 crystalTint = mix(vTargetGlow, vec3(1.0), 0.42);
+      vec3 specTint = mix(vTargetGlow, vec3(1.0), 0.62);
+
+      float riseT = smoothstep(0.16, 0.74, normElevation);
+      float energyBoost = clamp(riseT + peakClamped * 0.65 + rippleLift * 0.55, 0.0, 1.0);
+
+      // 仅较高柱子显示晶莹棱角描边（低矮柱体完全无描边）
+      float tallOutlineGate = smoothstep(0.30, 0.72, normElevation);
+      tallOutlineGate = clamp(tallOutlineGate + peakClamped * 0.55 + rippleLift * 0.45, 0.0, 1.0);
+      vec3 crystalEdgeCol = mix(
+        mix(vCurrentGlow, vTargetGlow, 0.35) * 1.18,
+        mix(uPeakColor, vec3(1.0), 0.42) * 1.28,
+        clamp(0.28 + peakClamped * 0.52 + idleCrest * 0.25, 0.0, 1.0)
+      );
 
       vec3 finalColor;
 
       if (isTop) {
-        float topIntensity = smoothstep(mix(0.0, 0.10, dim), mix(0.48, 0.68, dim), normElevation) + clamp(peakBlend * 0.45, 0.0, 1.0);
-        topIntensity *= mix(1.0, 0.84, farSoft);
-        float edgeDist = min(min(vUv.x, 1.0 - vUv.x), min(vUv.y, 1.0 - vUv.y));
-        float bevelW = max(0.075, uvFw * 1.5);
-        float outerRim = (1.0 - smoothstep(0.0, bevelW, edgeDist)) * detailFade;
+        float topIntensity = smoothstep(mix(0.0, 0.08, dim), mix(0.46, 0.64, dim), normElevation) + clamp(peakBlend * 0.45, 0.0, 1.0);
+        topIntensity *= mix(1.0, 0.86, farSoft);
+        float topClamped = clamp(topIntensity, 0.0, 1.0);
 
-        vec3 baseFloorCol = mix(uBaseColor2 * 1.12, uBaseColor1 * 0.90, dim);
-        vec3 darkCap = mix(baseFloorCol, uBaseColor2 * mix(1.18, 0.88, dim), smoothstep(0.0, 0.36, normElevation)) * lowHeightDim;
-        vec3 capBase = mix(darkCap, vCurrentGlow, clamp(topIntensity, 0.0, 1.0));
+        // 低矮柱体也具深色半透萤石/冰晶底韵（不死灰、不扁平）
+        vec3 baseFloorCol = mix(uBaseColor2 * 1.15, uBaseColor1 * 0.92, dim)
+                          + vTargetGlow * mix(0.11, 0.06, dim) * min(uGlowIntensity, 1.35);
+        vec3 darkCrystalCap = mix(baseFloorCol, uBaseColor2 * mix(1.22, 0.95, dim) + vTargetGlow * 0.14, smoothstep(0.0, 0.36, normElevation)) * lowHeightDim;
 
-        capBase += rimLightCol * fresnel * 0.14 * smoothstep(0.22, 0.72, normElevation) * distFade;
+        // 升起晶柱顶面：通透柔光晶面，无中心光晕，微弱沿主光方向的透射梯度赋予实体晶体感
+        vec3 topGlowCol = mix(vCurrentGlow, uPeakColor * 1.24, peakClamped * 0.45 + idleCrest * 0.22);
+        float lightGrad = 0.965 + 0.07 * dot(vUv - 0.5, vec2(0.75, 0.66));
+        vec3 crownCol = topGlowCol * (1.10 + 0.20 * energyBoost) * lightGrad;
+        vec3 capBase = mix(darkCrystalCap, crownCol, topClamped);
 
-        float peakEdgeMix = clamp(vFaceLight.z * 0.42 + peakClamped * 0.75 + idleCrest * 0.42, 0.0, 1.0);
-        vec3 neonEdge = mix(vTargetGlow * 1.25, uPeakColor * 1.38, peakEdgeMix);
-        float edgeFloor = mix(0.24, 0.06, dim);
-        float edgeGate = clamp(edgeFloor + smoothstep(mix(0.08, 0.18, dim), mix(0.44, 0.58, dim), normElevation) * (1.0 - edgeFloor) + rippleLift * 0.65, 0.0, 1.0);
-        capBase += neonEdge * outerRim * edgeGate * (0.34 + 0.50 * clamp(topIntensity, 0.0, 1.0));
+        // 磨砂晶面柔润镜面光泽 + 掠射菲涅尔透亮（所有柱体均有细腻水晶质感）
+        capBase += crystalTint * satinSpec * (0.09 + 0.12 * energyBoost) * distFade;
+        capBase += specTint * crystalSpec * (0.14 + 0.18 * energyBoost) * distFade;
+        capBase += crystalTint * fresnelSoft * (0.10 + 0.14 * energyBoost) * distFade;
+
+        // 仅高柱顶部四条棱线泛出清脆晶体反光描边（低柱 tallOutlineGate == 0 完全无描边）
+        if (tallOutlineGate > 0.001) {
+          float edgeDist = min(min(vUv.x, 1.0 - vUv.x), min(vUv.y, 1.0 - vUv.y));
+          float bevelW = max(0.068, uvFw * 1.45);
+          float outerRim = (1.0 - smoothstep(0.0, bevelW, edgeDist)) * detailFade;
+          capBase += crystalEdgeCol * outerRim * tallOutlineGate * (0.30 + 0.18 * topClamped);
+        }
 
         finalColor = capBase;
       } else {
-        // 锚定世界高度的物理缝隙遮蔽（中远景柔化黑缝，使柱群自然融合成连贯起伏波面）
+        // 底部沉稳压暗，保持水晶柱群立体接地感（中远景柔化防噪）
         float worldCrevice = smoothstep(0.0, 1.85, vWorldPos.y);
-        float relCrevice = smoothstep(0.0, 0.38, vRelativeY);
-        float creviceAO = mix(mix(0.56, 0.34, dim), 1.0, max(worldCrevice, relCrevice * 0.60));
+        float relCrevice = smoothstep(0.0, 0.38, relY);
+        float creviceAO = mix(mix(0.54, 0.34, dim), 1.0, max(worldCrevice, relCrevice * 0.62));
         creviceAO = mix(creviceAO, mix(creviceAO, 0.88, 0.72), farSoft);
 
-        vec3 bodyColor = mix(uBaseColor1 * mix(0.95, 0.72, dim), uBaseColor2 * mix(1.22, 0.96, dim), vRelativeY * distFade);
-        bodyColor *= vFaceLight.x * lowHeightDim;
+        // 深色晶底向中上部平滑透光过渡（低柱也具备柔润萤石晶身）
+        vec3 deepCrystalRoot = mix(uBaseColor1 * mix(0.95, 0.74, dim), uBaseColor2 * mix(1.24, 0.98, dim), relY * distFade)
+                             + vTargetGlow * (0.05 + 0.08 * relY) * mix(1.0, 0.62, dim) * min(uGlowIntensity, 1.35);
+        vec3 bodyColor = deepCrystalRoot * vFaceLight.x * lowHeightDim;
 
-        float sideGrad = pow(smoothstep(0.0, 0.96, vRelativeY), 0.78);
-        float heightEnergy = pow(normElevation, mix(0.85, 1.20, dim));
-        float shaftFloor = smoothstep(0.22, 0.78, normElevation) * 0.34 * worldCrevice;
-        float sideGlow = clamp(mix(shaftFloor, 1.0, sideGrad) * heightEnergy * 1.18, 0.0, 1.0);
+        // 内部由底向上渐强的次表面透光发光（上亮下深）
+        float sideGrad = pow(smoothstep(0.0, 0.98, relY), 0.76);
+        float heightEnergy = pow(max(normElevation, 0.001), mix(0.82, 1.14, dim));
+        float shaftFloor = smoothstep(0.18, 0.76, normElevation) * 0.34 * worldCrevice;
+        float sideGlow = clamp(mix(shaftFloor, 1.0, sideGrad) * heightEnergy * 1.14, 0.0, 1.0);
 
-        vec3 sideGlowColor = mix(vCurrentGlow, uPeakColor * 1.2, peakClamped * 0.45 + idleCrest * 0.18);
+        vec3 sideGlowColor = mix(vCurrentGlow, uPeakColor * 1.18, peakClamped * 0.42 + idleCrest * 0.18);
         finalColor = mix(bodyColor, sideGlowColor * vFaceLight.y, sideGlow);
 
-        float rimFloor = mix(0.14, 0.0, dim);
-        float rimGlow = smoothstep(0.042, 0.0, distFromTop) * detailFade * clamp(rimFloor + smoothstep(mix(0.02, 0.10, dim), mix(0.48, 0.64, dim), normElevation) * (1.0 - rimFloor) + rippleLift * 0.6, 0.0, 1.0);
-        finalColor += mix(vCurrentGlow, uPeakColor * 1.25, peakClamped * 0.42 + idleCrest * 0.28) * rimGlow * 0.90;
+        // 次表面内部透射（磨砂冰晶特有的柔润背光穿透感与掠射透亮）
+        float backTrans = pow(clamp(dot(V, normalize(-LkeyFrag + N * 0.45)), 0.0, 1.0), 2.4);
+        float rimTrans = pow(clamp(dot(V, normalize(-LrimFrag + N * 0.45)), 0.0, 1.0), 2.8);
+        float sssWeight = (0.14 + 0.24 * energyBoost) * (0.35 + 0.65 * relY) * distFade;
+        vec3 sssCol = mix(vTargetGlow, sideGlowColor, 0.55);
+        finalColor += sssCol * (backTrans * 0.55 + rimTrans * 0.35) * sssWeight;
 
-        float sideEdgeDist = min(vUv.x, 1.0 - vUv.x);
-        float sideBevel = (1.0 - smoothstep(0.0, max(0.06, uvFw * 1.45), sideEdgeDist)) * detailFade;
-        finalColor += rimLightCol * sideBevel * smoothstep(0.14, 0.54, normElevation) * 0.24 * creviceAO * distFade;
+        // 磨砂晶面双层高光 + 掠射菲涅尔半透边缘光（让低柱和高柱都显水晶质感）
+        finalColor += crystalTint * satinSpec * (0.07 + 0.10 * energyBoost) * (0.4 + 0.6 * relY) * distFade;
+        finalColor += specTint * crystalSpec * (0.12 + 0.16 * energyBoost) * (0.4 + 0.6 * relY) * distFade;
+        finalColor += crystalTint * fresnelSoft * (0.09 + 0.14 * energyBoost) * (0.28 + 0.72 * relY) * distFade;
+        finalColor += specTint * fresnel * (0.06 + 0.10 * energyBoost) * relY * distFade;
 
-        finalColor += rimLightCol * fresnel * 0.11 * vRelativeY * smoothstep(0.16, 0.64, normElevation) * distFade;
+        // 仅高柱呈现晶莹棱角反光线（顶部定宽微倒角 + 竖向棱线，低柱完全无描边）
+        if (tallOutlineGate > 0.001) {
+          float bevelH = max(0.068, uvFw * totalHeight * 1.35);
+          float rimGlow = smoothstep(bevelH, 0.0, worldDistFromTop) * detailFade * tallOutlineGate;
+          finalColor += crystalEdgeCol * rimGlow * 0.24;
+
+          float sideEdgeDist = min(vUv.x, 1.0 - vUv.x);
+          float sideBevel = (1.0 - smoothstep(0.0, max(0.055, uvFw * 1.45), sideEdgeDist)) * detailFade * tallOutlineGate;
+          finalColor += crystalEdgeCol * sideBevel * (0.24 + 0.14 * relY) * creviceAO * distFade;
+        }
+
         finalColor *= creviceAO;
       }
 
@@ -774,15 +828,144 @@ const MapShaderMaterial = createShaderMaterial(
 );
 
 // ============================================================
+// 1B. FloorDiscMaterial — Early-Z 主题暗底承托圆盘
+//     - 排在地形柱之后绘制 (renderOrder 28)，被柱体遮挡的 ~98% 像素由硬件 Early-Z 剔除
+//     - 填补柱列与屏幕底边平行时的直通暗缝，带邻近高柱柔光反射与一致的相机距离雾效
+// ============================================================
+const FloorDiscMaterial = createShaderMaterial(
+  {
+    uUseFbo: 0,
+    uSimTex0: null,
+    uHalfExtent: 84,
+    uGridStep: 1.05,
+    uGridSize: 96,
+    uBaseColor1: new se(0.01, 0.02, 0.04),
+    uBaseColor2: new se(0.03, 0.05, 0.09),
+    uCoolCore: new se(0, 0.3, 1),
+    uMidCore: new se(0.6, 0.25, 0.9),
+    uWarmCore: new se(1, 0.2, 0.1),
+    uPeakColor: new se(1, 1, 1),
+    uPeakEnabled: 1,
+    uPeakIntensity: 1,
+    uGlowIntensity: 1,
+    uLowPillarDim: 0.35,
+    uEnergy: 0,
+  },
+  `
+    out vec3 vWorldPos;
+    void main() {
+      vec4 wp = modelMatrix * vec4(position, 1.0);
+      vWorldPos = wp.xyz;
+      gl_Position = projectionMatrix * viewMatrix * wp;
+    }
+  `,
+  `
+    precision highp float;
+
+    uniform float uUseFbo;
+    uniform sampler2D uSimTex0;
+    uniform float uHalfExtent;
+    uniform float uGridStep;
+    uniform float uGridSize;
+    uniform vec3 uBaseColor1;
+    uniform vec3 uBaseColor2;
+    uniform vec3 uCoolCore;
+    uniform vec3 uMidCore;
+    uniform vec3 uWarmCore;
+    uniform vec3 uPeakColor;
+    uniform float uPeakEnabled;
+    uniform float uPeakIntensity;
+    uniform float uGlowIntensity;
+    uniform float uLowPillarDim;
+    uniform float uEnergy;
+
+    in vec3 vWorldPos;
+    out vec4 fragColor;
+
+    ${GLSL_FILMIC}
+
+    void main() {
+      vec2 pos2D = vWorldPos.xz;
+      float centerDist = length(pos2D);
+
+      // 与 MapShaderMaterial 完全一致的相机真实距离空气透视（俯视自动减弱雾气）
+      float camOriginDist = max(length(cameraPosition), 1.0);
+      float camDist = length(cameraPosition - vWorldPos);
+      float grazing = 1.0 - smoothstep(0.58, 0.94, cameraPosition.y / camOriginDist);
+      float fogStart = camOriginDist * 0.68;
+      float fogEnd = camOriginDist + uHalfExtent * 0.82;
+      float camFogT = smoothstep(fogStart, fogEnd, camDist);
+      float diskEdgeFade = smoothstep(uHalfExtent * 0.76, uHalfExtent * 0.995, centerDist);
+      float aerialFog = clamp(max(camFogT * grazing, diskEdgeFade * 0.85), 0.0, 1.0);
+
+      float dim = clamp(uLowPillarDim, 0.0, 1.0);
+      float glowCap = min(uGlowIntensity, 1.38);
+      vec3 themeTint = mix(uCoolCore, uWarmCore, 0.40);
+
+      // 与柱群同环带的主体色（内暖 -> 中环 -> 外冷）
+      float bandT = clamp(centerDist / max(uHalfExtent, 1.0), 0.0, 1.0);
+      float innerW = 1.0 - smoothstep(0.28, 0.44, bandT);
+      float outerW = smoothstep(0.56, 0.76, bandT);
+      float midW = max(0.0, 1.0 - innerW - outerW);
+      vec3 localThemeCol = uWarmCore * innerW + uMidCore * midW + uCoolCore * outerW;
+
+      // 略微压暗的主体底色：与柱底平滑衔接，彻底消除轴向黑缝
+      vec3 floorCol = mix(uBaseColor1 * 1.02, uBaseColor2 * 1.24, mix(0.62, 0.34, dim))
+                    + localThemeCol * mix(0.095, 0.052, dim) * glowCap;
+
+      // 邻近升起高柱与峰值的缝隙漫反射余光（避免高亮柱群与俯视中出现深色十字/竖缝）
+      float localElev = 0.0;
+      float localPeak = 0.0;
+      if (uUseFbo > 0.5) {
+        vec2 gf = (pos2D + vec2(uHalfExtent)) / max(uGridStep, 1e-4);
+        ivec2 maxIdx = ivec2(max(int(uGridSize) - 1, 0));
+        ivec2 c0 = clamp(ivec2(floor(gf)), ivec2(0), maxIdx);
+        ivec2 c1 = clamp(c0 + ivec2(1, 0), ivec2(0), maxIdx);
+        ivec2 c2 = clamp(c0 + ivec2(0, 1), ivec2(0), maxIdx);
+        ivec2 c3 = clamp(c0 + ivec2(1, 1), ivec2(0), maxIdx);
+        vec2 fr = clamp(fract(gf), 0.0, 1.0);
+        vec2 s0 = mix(texelFetch(uSimTex0, c0, 0).xy, texelFetch(uSimTex0, c1, 0).xy, fr.x);
+        vec2 s1 = mix(texelFetch(uSimTex0, c2, 0).xy, texelFetch(uSimTex0, c3, 0).xy, fr.x);
+        vec2 sim = mix(s0, s1, fr.y);
+        localElev = sim.x;
+        localPeak = sim.y;
+      } else {
+        localElev = uEnergy * 3.5 * smoothstep(uHalfExtent, 0.0, centerDist);
+      }
+      float tallGate = smoothstep(0.45, 0.78, localPeak);
+      float peakClamped = clamp(pow(localPeak, 0.85) * tallGate * uPeakEnabled * uPeakIntensity, 0.0, 1.0);
+      vec3 bounceCol = mix(localThemeCol, uPeakColor * 1.15, peakClamped * 0.78);
+      float bounceT = smoothstep(0.28, 4.6, localElev);
+      floorCol = mix(floorCol, bounceCol * glowCap * mix(0.68, 0.52, dim), bounceT * 0.78);
+
+      if (aerialFog > 0.001) {
+        float horizonGlowT = smoothstep(0.45, 1.0, aerialFog);
+        vec3 atmosphericColor = mix(uBaseColor1 * 0.75, uBaseColor2 * 0.92, 0.45)
+                              + themeTint * (0.055 + 0.075 * horizonGlowT) * glowCap;
+        float fogStrength = pow(aerialFog, 1.38) * 0.86;
+        floorCol = mix(floorCol, atmosphericColor, clamp(fogStrength, 0.0, 0.92));
+      }
+
+      floorCol = acesSoft(floorCol * 1.10);
+      floorCol += (ignDither(gl_FragCoord.xy) - 0.5) / 255.0;
+      fragColor = vec4(floorCol, 1.0);
+    }
+  `,
+  { glslVersion: GLSL3 },
+);
+
+// ============================================================
 // 2. SkyShaderMaterial — 全屏单三角形 + 硬件 Early-Z 深度剔除
-//    - 仅 3 顶点，在不透明地形之后绘制 (z = 0.99999)，被柱群遮挡像素 0 片元着色开销
+//    - 底层全屏填充略微压暗的主题色（无黑边硬裁剪），上层星空/星云/极光按视角自适应圆盘曲率贴合地平线
+//    - 仅 3 顶点，在地形与底盘之后绘制 (z = 0.99999)，被遮挡像素 0 片元着色开销
 //    - 6 组全屏恒定 (cos, sin) 旋转矩阵由 CPU 每帧预计算传入，每像素省 12 次三角函数
 // ============================================================
 const SkyShaderMaterial = createShaderMaterial(
   {
     uTime: 0,
-    uHorizon: -0.22,
+    uHalfExtent: 84,
     uFogColor: new se(0.005, 0.008, 0.025),
+    uBaseColor2: new se(0.015, 0.025, 0.07),
     uNebulaA: new se(0.35, 0.1, 0.9),
     uNebulaB: new se(0.65, 0.25, 1),
     uPeakColor: new se(1, 0.55, 0.05),
@@ -813,8 +996,9 @@ const SkyShaderMaterial = createShaderMaterial(
   `,
   `
     uniform float uTime;
-    uniform float uHorizon;
+    uniform float uHalfExtent;
     uniform vec3 uFogColor;
+    uniform vec3 uBaseColor2;
     uniform vec3 uNebulaA;
     uniform vec3 uNebulaB;
     uniform vec3 uPeakColor;
@@ -896,14 +1080,36 @@ const SkyShaderMaterial = createShaderMaterial(
 
     void main() {
       vec3 dir = normalize(vRay);
+      float glowCap = min(uGlow, 1.42);
+      vec3 themeMid = mix(uNebulaA, uNebulaB, 0.40);
 
-      if (dir.y < uHorizon - 0.06) {
-        gl_FragColor = vec4(uFogColor * 0.18, 1.0);
+      // 全屏底层略微压暗的主题色（与远景雾色同源，彻底消除任意视角/缝隙露出的纯黑底）
+      vec3 lowerBackdrop = mix(uFogColor * 0.78, uBaseColor2 * 0.94, 0.48)
+                         + themeMid * 0.068 * glowCap;
+
+      // 按每像素视线方位角实时计算圆形地形盘外缘的精确地平线俯仰角（适配任意俯仰角/视距/超宽屏）
+      vec2 camXZ = cameraPosition.xz;
+      float camY = max(cameraPosition.y - 0.5, 0.5);
+      float horizLen = length(dir.xz);
+      vec2 uXZ = dir.xz / max(horizLen, 1e-5);
+      float b = dot(camXZ, uXZ);
+      float c = dot(camXZ, camXZ) - uHalfExtent * uHalfExtent;
+      float disc = b * b - c;
+      float eps = uHalfExtent * uHalfExtent * 0.06;
+      float smoothDisc = 0.5 * (disc + sqrt(disc * disc + eps * eps));
+      float tEdge = max(-b, 0.0) + sqrt(smoothDisc);
+      float localHorizon = -camY / sqrt(camY * camY + tEdge * tEdge + 1e-4);
+
+      // 低于曲率地平线下方直接输出连续主题暗底（跳过星云/极光/星空采样，零硬裁剪跳变）
+      if (dir.y < localHorizon - 0.08) {
+        vec3 col = acesSoft(lowerBackdrop * 1.12);
+        col += (ignDither(gl_FragCoord.xy) - 0.5) / 255.0;
+        gl_FragColor = vec4(col, 1.0);
         return;
       }
 
-      float horizonBlend = smoothstep(uHorizon - 0.04, uHorizon + 0.14, dir.y);
-      float skyElev = max(0.0, dir.y - uHorizon);
+      float skyElev = max(0.0, dir.y - localHorizon);
+      float horizonBlend = smoothstep(localHorizon - 0.06, localHorizon + 0.12, dir.y);
 
       // 倾斜银河坐标系（使用 CPU 预计算旋转）
       vec3 rDir = vec3(uGalRot.x * dir.x + uGalRot.y * dir.z, dir.y, -uGalRot.y * dir.x + uGalRot.x * dir.z);
@@ -922,23 +1128,22 @@ const SkyShaderMaterial = createShaderMaterial(
 
       float dustRift = smoothstep(-0.08, 0.52, nebFine) * galBand;
       float nebField = nebMain * 0.58 + nebFine * 0.42;
-      float nebDensity = smoothstep(0.06, 0.96, nebField + galBand * 0.38) * smoothstep(uHorizon + 0.02, uHorizon + 0.22, dir.y);
+      float nebDensity = smoothstep(0.06, 0.96, nebField + galBand * 0.38) * smoothstep(localHorizon - 0.01, localHorizon + 0.20, dir.y);
       nebDensity *= (1.0 - dustRift * 0.58);
 
-      vec3 deepVoid = uFogColor * 0.28;
-      vec3 horizonNight = uFogColor * 0.62 + uNebulaA * 0.055;
-      vec3 baseCol = mix(uFogColor * 0.55, mix(horizonNight, deepVoid, smoothstep(0.06, 0.46, skyElev)), horizonBlend);
+      vec3 deepVoid = uFogColor * 0.32 + themeMid * 0.018 * glowCap;
+      vec3 horizonNight = mix(lowerBackdrop, uFogColor * 0.62 + themeMid * 0.082 * glowCap, 0.55);
+      vec3 baseCol = mix(lowerBackdrop, mix(horizonNight, deepVoid, smoothstep(0.06, 0.46, skyElev)), horizonBlend);
 
-      float glowCap = min(uGlow, 1.42);
       vec3 nebCol = mix(uNebulaA, uNebulaB, smoothstep(-0.25, 0.70, nebMain + 0.20));
       float ionKnot = smoothstep(0.32, 0.86, nebMain * 0.65 + nebFine * 0.55) * galBand;
       nebCol = mix(nebCol, mix(uNebulaB, uPeakColor, 0.40), ionKnot * 0.48);
 
       vec3 col = mix(baseCol, nebCol * glowCap * 0.66, nebDensity * (0.68 + uAudioResp * 0.14));
-      col += mix(uNebulaB, uPeakColor, 0.25 * galBand) * filament * smoothstep(uHorizon + 0.03, uHorizon + 0.26, dir.y) * 0.24 * glowCap;
+      col += mix(uNebulaB, uPeakColor, 0.25 * galBand) * filament * smoothstep(localHorizon + 0.01, localHorizon + 0.24, dir.y) * 0.24 * glowCap;
 
-      // 北欧丝绸极光幕帘（使用 CPU 预计算旋转）
-      float aurMaskY = smoothstep(uHorizon + 0.005, uHorizon + 0.085, dir.y) * (1.0 - smoothstep(uHorizon + 0.13, uHorizon + 0.36, dir.y));
+      // 北欧丝绸极光幕帘（随曲率地平线平滑展开，使用 CPU 预计算旋转）
+      float aurMaskY = smoothstep(localHorizon - 0.015, localHorizon + 0.075, dir.y) * (1.0 - smoothstep(localHorizon + 0.13, localHorizon + 0.36, dir.y));
       if (aurMaskY > 0.001) {
         vec2 hDir = normalize(rDir.xz + vec2(1e-5, 0.0));
         vec2 hRot = vec2(uAurRot.x * hDir.x - uAurRot.y * hDir.y, uAurRot.y * hDir.x + uAurRot.x * hDir.y);
@@ -948,16 +1153,16 @@ const SkyShaderMaterial = createShaderMaterial(
         float raysB = sin(dot(hRot, vec2(-7.0, 11.0)) - ribbonB * 4.2 - uTime * 0.12);
         float rays = 0.58 + 0.42 * (raysA * 0.55 + raysB * 0.45);
         float curtain = smoothstep(0.08, 0.85, (ribbonA * 0.55 + ribbonB * 0.45) * 0.5 + 0.5) * rays;
-        float leDy = (dir.y - (uHorizon + 0.075)) / 0.048;
+        float leDy = (dir.y - (localHorizon + 0.075)) / 0.048;
         float lowerEdge = exp(-leDy * leDy);
-        float vertFade = pow(max(0.0, 1.0 - smoothstep(uHorizon + 0.07, uHorizon + 0.35, dir.y)), 1.55);
-        vec3 aurCol = mix(uNebulaA * 1.15, mix(uNebulaB, uPeakColor, 0.28), smoothstep(uHorizon + 0.05, uHorizon + 0.28, dir.y));
+        float vertFade = pow(max(0.0, 1.0 - smoothstep(localHorizon + 0.07, localHorizon + 0.35, dir.y)), 1.55);
+        vec3 aurCol = mix(uNebulaA * 1.15, mix(uNebulaB, uPeakColor, 0.28), smoothstep(localHorizon + 0.05, localHorizon + 0.28, dir.y));
         col += aurCol * (curtain * vertFade * 0.28 + lowerEdge * curtain * 0.18) * aurMaskY * glowCap * (1.0 + uAudioResp * 0.45 + uBassResp * 0.25);
       }
 
       // 3 层独立视差锐利星空 + 银河星尘
-      if (dir.y > uHorizon + 0.005) {
-        float starFade = smoothstep(uHorizon + 0.005, uHorizon + 0.075, dir.y);
+      if (dir.y > localHorizon - 0.01) {
+        float starFade = smoothstep(localHorizon - 0.01, localHorizon + 0.07, dir.y);
         vec3 star = starLayer(dir, uStarRot0, 385.0, 1.18, 1.22, vec2(0.0, 1.0), vec2(2.5, 5.5), 0.994, true);
         star += starLayer(dir, uStarRot1, 420.0, 0.70, 0.84, vec2(5.0, 6.0), vec2(4.0, 9.0), 0.980, false);
         star += starLayer(dir, uStarRot2, 470.0, 0.36, 0.52, vec2(9.0, 10.0), vec2(7.0, 15.0), 0.960, false);
@@ -967,9 +1172,9 @@ const SkyShaderMaterial = createShaderMaterial(
         col += star * starFade;
       }
 
-      // 地平线大气瑞利散射辉光
-      float hbDy = (dir.y - (uHorizon + 0.028)) / 0.068;
-      float hBand = exp(-hbDy * hbDy) * smoothstep(uHorizon - 0.035, uHorizon + 0.015, dir.y);
+      // 地平线大气瑞利散射辉光（沿圆盘外缘无缝延展，衔接远景雾气）
+      float hbDy = (dir.y - (localHorizon + 0.025)) / 0.072;
+      float hBand = exp(-hbDy * hbDy) * smoothstep(localHorizon - 0.055, localHorizon + 0.012, dir.y);
       vec3 horizonGlowCol = mix(uNebulaA, uNebulaB, 0.45) * glowCap;
       col += horizonGlowCol * hBand * (0.20 + uBassResp * 0.16);
 
@@ -1123,6 +1328,7 @@ export {
   StaticPillarBakeMaterial,
   HeightfieldSimMaterial,
   MapShaderMaterial,
+  FloorDiscMaterial,
   SkyShaderMaterial,
   MeteorShaderMaterial,
   SparkShaderMaterial,

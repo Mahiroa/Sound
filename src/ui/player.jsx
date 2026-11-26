@@ -91,6 +91,8 @@ const ClockWidget = le.memo(function ClockWidget({
   dateStyle = "iso",
   glassEnabled = true,
   glassStrength = 12,
+  shadowEnabled = true,
+  x = 50,
   y = 18,
 }) {
   const [snap, setSnap] = le.useState(() => formatClockSnapshot(dateStyle, showSeconds));
@@ -119,16 +121,16 @@ const ClockWidget = le.memo(function ClockWidget({
     style: {
       position: "absolute",
       top: `${y}%`,
-      left: "50%",
-      transform: "translate(-50%, -50%)",
+      left: `${x}%`,
+      transform: `translate(-${x}%, -${y}%)`,
       zIndex: 40,
       textAlign: "center",
+      whiteSpace: "nowrap",
       pointerEvents: "none",
       userSelect: "none",
       contain: "layout style paint",
       fontFamily: `${font}, -apple-system, BlinkMacSystemFont, sans-serif`,
       color,
-      opacity,
       lineHeight: 1.15,
       background: glassEnabled
         ? "linear-gradient(155deg, rgba(10,14,26,0.34) 0%, rgba(4,6,14,0.22) 100%)"
@@ -143,7 +145,9 @@ const ClockWidget = le.memo(function ClockWidget({
       padding: glassEnabled ? `${padY}px ${padX}px` : "0",
       border: glassEnabled ? "1px solid rgba(255,255,255,0.10)" : "none",
       boxShadow: glassEnabled
-        ? "0 14px 40px rgba(0,0,0,0.38), inset 0 1px 0 rgba(255,255,255,0.14), inset 0 -1px 0 rgba(255,255,255,0.03), 0 0 28px color-mix(in srgb, var(--sw-accent, #7c3aed) 14%, transparent)"
+        ? shadowEnabled
+          ? "0 14px 40px rgba(0,0,0,0.38), inset 0 1px 0 rgba(255,255,255,0.14), inset 0 -1px 0 rgba(255,255,255,0.03), 0 0 28px color-mix(in srgb, var(--sw-accent, #7c3aed) 14%, transparent)"
+          : "inset 0 1px 0 rgba(255,255,255,0.14), inset 0 -1px 0 rgba(255,255,255,0.03)"
         : "none",
       overflow: "hidden",
     },
@@ -162,55 +166,62 @@ const ClockWidget = le.memo(function ClockWidget({
           },
         }),
       Dt.jsxs("div", {
-        style: {
-          fontSize: `${size}px`,
-          fontWeight: 300,
-          letterSpacing: "0.06em",
-          fontVariantNumeric: "tabular-nums",
-          textShadow: glassEnabled
-            ? "0 2px 14px rgba(0,0,0,0.45), 0 0 22px color-mix(in srgb, var(--sw-accent, #7c3aed) 24%, transparent)"
-            : "0 3px 18px rgba(0,0,0,0.68), 0 0 28px color-mix(in srgb, var(--sw-accent, #7c3aed) 30%, transparent)",
-          display: "inline-flex",
-          alignItems: "baseline",
-          justifyContent: "center",
-        },
+        style: { opacity },
         children: [
-          Dt.jsx("span", { children: snap.hh }),
-          Dt.jsx("span", { className: "sw-colon", children: ":" }),
-          Dt.jsx("span", { children: snap.mm }),
-          showSeconds &&
-            Dt.jsx("span", {
-              style: {
-                fontSize: `${Math.round(size * 0.52)}px`,
-                opacity: 0.62,
-                marginLeft: "0.18em",
-                fontWeight: 350,
-                letterSpacing: "0.04em",
-              },
-              children: snap.ss,
-            }),
+          Dt.jsxs("div", {
+            style: {
+              fontSize: `${size}px`,
+              fontWeight: 300,
+              letterSpacing: "0.06em",
+              fontVariantNumeric: "tabular-nums",
+              textShadow: shadowEnabled
+                ? glassEnabled
+                  ? "0 2px 14px rgba(0,0,0,0.45), 0 0 22px color-mix(in srgb, var(--sw-accent, #7c3aed) 24%, transparent)"
+                  : "0 3px 18px rgba(0,0,0,0.68), 0 0 28px color-mix(in srgb, var(--sw-accent, #7c3aed) 30%, transparent)"
+                : "none",
+              display: "inline-flex",
+              alignItems: "baseline",
+              justifyContent: "center",
+            },
+            children: [
+              Dt.jsx("span", { children: snap.hh }),
+              Dt.jsx("span", { className: "sw-colon", children: ":" }),
+              Dt.jsx("span", { children: snap.mm }),
+              showSeconds &&
+                Dt.jsx("span", {
+                  style: {
+                    fontSize: `${Math.round(size * 0.52)}px`,
+                    opacity: 0.62,
+                    marginLeft: "0.18em",
+                    fontWeight: 350,
+                    letterSpacing: "0.04em",
+                  },
+                  children: snap.ss,
+                }),
+            ],
+          }),
+          Dt.jsx("div", {
+            style: {
+              width: `${Math.max(46, Math.round(size * 1.45))}px`,
+              height: "1px",
+              margin: `${Math.max(5, Math.round(size * 0.12))}px auto ${Math.max(4, Math.round(size * 0.1))}px`,
+              background:
+                "linear-gradient(90deg, transparent, color-mix(in srgb, var(--sw-accent, #a78bfa) 68%, rgba(255,255,255,0.5)), transparent)",
+              opacity: 0.55,
+            },
+          }),
+          Dt.jsx("div", {
+            style: {
+              fontSize: `${Math.max(11, Math.round(size * 0.28))}px`,
+              opacity: 0.72,
+              fontWeight: 400,
+              letterSpacing: "0.18em",
+              textTransform: "uppercase",
+              textShadow: shadowEnabled ? "0 1px 10px rgba(0,0,0,0.55)" : "none",
+            },
+            children: snap.dateText,
+          }),
         ],
-      }),
-      Dt.jsx("div", {
-        style: {
-          width: `${Math.max(46, Math.round(size * 1.45))}px`,
-          height: "1px",
-          margin: `${Math.max(5, Math.round(size * 0.12))}px auto ${Math.max(4, Math.round(size * 0.1))}px`,
-          background:
-            "linear-gradient(90deg, transparent, color-mix(in srgb, var(--sw-accent, #a78bfa) 68%, rgba(255,255,255,0.5)), transparent)",
-          opacity: 0.55,
-        },
-      }),
-      Dt.jsx("div", {
-        style: {
-          fontSize: `${Math.max(11, Math.round(size * 0.28))}px`,
-          opacity: 0.72,
-          fontWeight: 400,
-          letterSpacing: "0.18em",
-          textTransform: "uppercase",
-          textShadow: "0 1px 10px rgba(0,0,0,0.55)",
-        },
-        children: snap.dateText,
       }),
     ],
   });
@@ -677,6 +688,8 @@ function RootApp() {
     clockDateStyle,
     clockGlassEnabled,
     clockGlassStrength,
+    clockShadowEnabled,
+    clockX,
     clockY,
     coverMix,
   } = prefs;
@@ -784,6 +797,8 @@ function RootApp() {
           dateStyle: clockDateStyle,
           glassEnabled: clockGlassEnabled,
           glassStrength: clockGlassStrength,
+          shadowEnabled: clockShadowEnabled,
+          x: clockX,
           y: clockY,
         }),
       Dt.jsx(MediaPlayerCard, {

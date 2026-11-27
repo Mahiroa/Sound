@@ -2,7 +2,7 @@
 
 > A 3D audio-reactive topography wallpaper for Wallpaper Engine powered by React 19, Three.js, React Three Fiber, and custom GLSL3 shaders.
 
-[![Version: 1.1.0](https://img.shields.io/badge/Version-1.1.0-emerald.svg)](./package.json)
+[![Version: 1.2.0](https://img.shields.io/badge/Version-1.2.0-emerald.svg)](./package.json)
 [![License: GPL-3.0](https://img.shields.io/badge/License-GPL--3.0-blue.svg)](./LICENSE)
 [![Platform: Wallpaper Engine](https://img.shields.io/badge/Platform-Wallpaper%20Engine-blueviolet.svg)](https://www.wallpaperengine.io/)
 [![React 19](https://img.shields.io/badge/React-19-61dafb.svg)](https://react.dev/)

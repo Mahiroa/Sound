@@ -1120,8 +1120,8 @@ const TerrainSceneInner = le.forwardRef(
         cs.frustum.setFromProjectionMatrix(cs.viewProj);
         const planes = cs.frustum.planes;
         const pillarPad = P * 0.6;
-        // FBO 额外扩展 1.5 格边距，确保 FloorDiscMaterial 2×2 双线性邻域 texel 始终有效
-        const fboPad = pillarPad + F * 1.5;
+        // FBO 额外扩展 3.5 格边距，确保 MapShaderMaterial 5×5 圆盘邻域平滑与 FloorDiscMaterial 2×2 双线性 texel 始终有效
+        const fboPad = pillarPad + F * 3.5;
         const pNX = cs.planeNX;
         const pNZ = cs.planeNZ;
         const pBias = cs.planeBias;
@@ -1316,14 +1316,14 @@ const TerrainSceneInner = le.forwardRef(
           cs.visRadius = 0;
         }
 
-        // 配置 FBO 硬件 Scissor 矩形（仅光栅化可见柱群外接网格 + 2 格双线性安全边距）
+        // 配置 FBO 硬件 Scissor 矩形（仅光栅化可见柱群外接网格 + 4 格邻域平滑安全边距）
         let scW = 0, scH = 0;
         if (fboPipe) {
           if (totalVis > 0) {
-            const scMinX = Math.max(0, vMinGx - 2);
-            const scMaxX = Math.min(m - 1, vMaxGx + 2);
-            const scMinY = Math.max(0, vMinGy - 2);
-            const scMaxY = Math.min(m - 1, vMaxGy + 2);
+            const scMinX = Math.max(0, vMinGx - 4);
+            const scMaxX = Math.min(m - 1, vMaxGx + 4);
+            const scMinY = Math.max(0, vMinGy - 4);
+            const scMaxY = Math.min(m - 1, vMaxGy + 4);
             scW = scMaxX - scMinX + 1;
             scH = scMaxY - scMinY + 1;
             fboPipe.simRT.scissorTest = true;
@@ -1637,6 +1637,8 @@ const TerrainSceneInner = le.forwardRef(
           sm.uCenterBoost = cb;
           sm.uRandomSpikeIntensity = rsi;
           sm.uWaveFlowIntensity = wfi;
+          sm.uPeakEnabled = v ? 1 : 0;
+          sm.uPeakIntensity = y;
           sm.uSubBass = nt.subBass;
           sm.uBass = nt.bass;
           sm.uLowMid = nt.lowMid;
@@ -1657,8 +1659,15 @@ const TerrainSceneInner = le.forwardRef(
         qe.uUseFbo = 1;
         qe.uSimTex0 = fboPipe.simRT.textures[0];
         qe.uSimTex1 = fboPipe.simRT.textures[1];
+        qe.uGridSize = m;
+        qe.uAudioIntensity = n;
+        qe.uSubBass = nt.subBass;
+        qe.uBass = nt.bass;
+        qe.uLowMid = nt.lowMid;
+        qe.uMid = nt.mid;
       } else {
         qe.uUseFbo = 0;
+        qe.uGridSize = m;
         qe.uTime = elapsed;
         qe.uBass = nt.bass;
         qe.uMid = nt.mid;
@@ -1688,6 +1697,7 @@ const TerrainSceneInner = le.forwardRef(
 
       floorMat.uUseFbo = qe.uUseFbo;
       floorMat.uSimTex0 = qe.uSimTex0;
+      floorMat.uSimTex1 = qe.uSimTex1;
       floorMat.uHalfExtent = W;
       floorMat.uGridStep = F;
       floorMat.uGridSize = m;

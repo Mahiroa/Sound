@@ -150,8 +150,8 @@ const StaticPillarBakeMaterial = createShaderMaterial(
 // ============================================================
 // 0B. HeightfieldSimMaterial — 每帧 m×m 离屏高度场模拟 (MRT count=2)
 //     每根柱子仅执行 1 次噪声+频段+波纹，彻底消除 20 顶点重复计算 (-95% GPU ALU)
-//     outSim0 = vec4(elevation, peakIntensity, rippleNormal, rippleWhite)
-//     outSim1 = vec4(rippleCrest, colorVar, centerDist, 1.0)
+//     outSim0 = vec4(elevation, spikePeak, rippleNormal, rippleWhite)
+//     outSim1 = vec4(rippleCrest, colorVar, centerDist, regionBlend)
 // ============================================================
 const HeightfieldSimMaterial = createShaderMaterial(
   {
@@ -166,6 +166,8 @@ const HeightfieldSimMaterial = createShaderMaterial(
     uCenterBoost: 0.2,
     uRandomSpikeIntensity: 0.3,
     uWaveFlowIntensity: 1,
+    uPeakEnabled: 1,
+    uPeakIntensity: 1,
     uSubBass: 0,
     uBass: 0,
     uLowMid: 0,
@@ -194,6 +196,8 @@ const HeightfieldSimMaterial = createShaderMaterial(
     uniform float uCenterBoost;
     uniform float uRandomSpikeIntensity;
     uniform float uWaveFlowIntensity;
+    uniform float uPeakEnabled;
+    uniform float uPeakIntensity;
 
     uniform float uSubBass;
     uniform float uBass;
@@ -277,11 +281,15 @@ const HeightfieldSimMaterial = createShaderMaterial(
       // 2. 分层频段地形响应（内核 SubBass -> 内环 Bass -> 全场 LowMid -> 中环流河 Mid -> 外环尖刺 HighMid -> 外缘星光 Treble）
       float subLift = 0.0;
       float bassLift = 0.0;
+      float bassLiftSmooth = 0.0;
       float lowMidLift = 0.0;
       float midLift = 0.0;
       float highMidLift = 0.0;
       float trebleLift = 0.0;
+      float energyLift = 0.0;
       float audioElevation = 0.0;
+      float regionElev = 0.0;
+      float spikeElev = 0.0;
 
       if (uAudioIntensity > 0.001) {
         if (uSubBass > 0.001) {
@@ -293,9 +301,13 @@ const HeightfieldSimMaterial = createShaderMaterial(
           float bassInner = smoothstep(uHalfExtent * 0.06 * range, uHalfExtent * 0.20 * range, centerDist);
           float bassOuter = smoothstep(uHalfExtent * 0.46 * range, uHalfExtent * 0.16 * range, centerDist + bassNoise * 5.2);
           float bassRegion = mix(0.32, 1.0, bassInner) * bassOuter;
+          float bassBase = easeLift(uBass, 4.6) * bassRegion;
           float bassRndRaw = smoothstep(0.0, 1.0, mix(rnd, 0.65, uSmoothness * 0.35) + uDensity * 0.45);
           float bassRnd = mix(0.76, bassRndRaw, min(spikeScale, 1.0));
-          bassLift = easeLift(uBass, 4.6) * bassRegion * bassRnd;
+          float bassSmoothRaw = smoothstep(0.0, 1.0, 0.65 + uDensity * 0.45);
+          float bassRndSmooth = mix(0.76, bassSmoothRaw, min(spikeScale, 1.0));
+          bassLift = bassBase * bassRnd;
+          bassLiftSmooth = bassBase * bassRndSmooth;
         }
         if (uLowMid > 0.001 && waveScale > 0.001) {
           float lowMidNoise = snoise(pos2D * 0.05 + vec2(uTime * 0.1, 0.0));
@@ -319,20 +331,28 @@ const HeightfieldSimMaterial = createShaderMaterial(
           trebleLift = easeLift(uTreble, 3.0) * trebleRegion * mix(0.28, 1.0, sparkle) * (0.35 + 0.65 * trebleGate) * spikeWeight;
         }
 
-        audioElevation = (subLift + bassLift + lowMidLift + midLift + highMidLift + trebleLift) * uAudioIntensity;
-
         if (uEnergy > 0.001 && spikeWeight > 0.001 && rnd > 0.986) {
           float energyRaw = clamp(uEnergy, 0.0, 1.0);
           float energyBounce = 1.0 - pow(1.0 - energyRaw, 1.5);
           energyBounce += sin(energyRaw * 6.283 * 2.0) * exp(-energyRaw * 5.0) * 0.2;
-          audioElevation += energyBounce * 4.8 * uAudioIntensity * spikeWeight;
+          energyLift = energyBounce * 4.8 * uAudioIntensity * spikeWeight;
         }
-        audioElevation *= audioRangeFalloff * centerGain * outerSkirt;
+
+        float envGain = audioRangeFalloff * centerGain * outerSkirt;
+        audioElevation = ((subLift + bassLift + lowMidLift + midLift + highMidLift + trebleLift) * uAudioIntensity + energyLift) * envGain;
+        regionElev = (subLift + bassLiftSmooth + lowMidLift + midLift) * uAudioIntensity * envGain;
+        spikeElev = ((highMidLift + trebleLift) * uAudioIntensity + energyLift) * envGain;
       }
 
+      // 分离连续中心区域强调色（供 3×3 两柱范围柔滑过渡）与独立单柱尖刺强调色（保持单柱锐利）
       float subPeak = clamp((subLift * centerGain) / 4.8, 0.0, 1.0);
-      float globalPeak = clamp((audioElevation - 3.8) / 5.2, 0.0, 1.0);
-      float peakIntensity = clamp(max(subPeak, globalPeak * 0.85), 0.0, 1.0);
+      float regionGlobalPeak = clamp((regionElev - 3.8) / 5.2, 0.0, 1.0);
+      float regionPeak = clamp(max(subPeak, regionGlobalPeak * 0.85), 0.0, 1.0);
+      float regionGate = smoothstep(0.45, 0.78, regionPeak);
+      float regionBlend = clamp(pow(regionPeak, 0.85) * regionGate * uPeakEnabled * uPeakIntensity, 0.0, 1.0);
+
+      float spikeMask = smoothstep(0.35, 1.15, spikeElev);
+      float spikePeak = clamp((audioElevation - 3.8) / 5.2, 0.0, 1.0) * 0.85 * spikeMask;
 
       float elevation = idleElevation + audioElevation + idleBlockWave;
 
@@ -369,7 +389,7 @@ const HeightfieldSimMaterial = createShaderMaterial(
       elevation += rippleElevation;
       outSim0 = vec4(
         elevation,
-        peakIntensity,
+        spikePeak,
         clamp(sqrt(rippleIntensityNormal), 0.0, 1.0),
         clamp(sqrt(rippleIntensityWhite), 0.0, 1.0)
       );
@@ -377,7 +397,7 @@ const HeightfieldSimMaterial = createShaderMaterial(
         clamp(sqrt(rippleCrest), 0.0, 1.0),
         colorVar,
         centerDist,
-        1.0
+        regionBlend
       );
     }
   `,
@@ -395,6 +415,7 @@ const MapShaderMaterial = createShaderMaterial(
     uUseFbo: 0,
     uSimTex0: null,
     uSimTex1: null,
+    uGridSize: 96,
     uTime: 0,
     uSubBass: 0,
     uBass: 0,
@@ -439,6 +460,7 @@ const MapShaderMaterial = createShaderMaterial(
     uniform float uUseFbo;
     uniform sampler2D uSimTex0;
     uniform sampler2D uSimTex1;
+    uniform float uGridSize;
 
     uniform float uTime;
     uniform float uIdleWave;
@@ -506,7 +528,8 @@ const MapShaderMaterial = createShaderMaterial(
 
       vec2 pos2D = aInstPos.xy;
       float elevation;
-      float peakIntensity;
+      float spikePeak;
+      float regionBlend;
       vec3 rippleAnim;
       float colorVariation;
       float centerDist;
@@ -516,12 +539,26 @@ const MapShaderMaterial = createShaderMaterial(
         vec4 sim0 = texelFetch(uSimTex0, cell, 0);
         vec4 sim1 = texelFetch(uSimTex1, cell, 0);
         elevation = sim0.x;
-        peakIntensity = sim0.y;
+        spikePeak = sim0.y;
         rippleAnim = vec3(sim0.z, sim0.w, sim1.x);
         colorVariation = sim1.y;
         centerDist = sim1.z;
+        regionBlend = sim1.a;
+        // 连续中心区域强调色 5×5 圆盘邻域平滑（dx²+dy²<=5，21 点均权）：形成约 3 根柱子范围的主体色→强调色自然过渡（单根独立尖刺不受影响）
+        if (uPeakEnabled > 0.5 && uAudioIntensity > 0.001 && (uSubBass > 0.001 || uBass > 0.001 || uLowMid > 0.001 || uMid > 0.001)) {
+          ivec2 maxCell = ivec2(max(int(uGridSize) - 1, 0));
+          float rSum = 0.0;
+          for (int dy = -2; dy <= 2; dy++) {
+            for (int dx = -2; dx <= 2; dx++) {
+              if (dx * dx + dy * dy <= 5) {
+                rSum += texelFetch(uSimTex1, clamp(cell + ivec2(dx, dy), ivec2(0), maxCell), 0).a;
+              }
+            }
+          }
+          regionBlend = rSum * (1.0 / 21.0);
+        }
       } else {
-        // 无半浮点 FBO 支持时的完整回退路径
+        // 无半浮点 FBO 支持时的完整回退路径（与 HeightfieldSimMaterial 严格同构）
         centerDist = length(pos2D);
         float rnd = random(pos2D);
         colorVariation = sin(pos2D.x * 0.075 + pos2D.y * 0.058) * 0.5 + 0.5;
@@ -553,40 +590,76 @@ const MapShaderMaterial = createShaderMaterial(
           idleBlockWave = combinedWave * uIdleWave * 2.85 * globalFalloff * outerSkirt;
         }
 
-        float subRegion = smoothstep(uHalfExtent * 0.24 * range, 0.0, centerDist);
-        float subLift = easeLift(uSubBass, 5.2) * subRegion;
-        float bassNoise = uBass > 0.001 ? snoise(pos2D * 0.095 - vec2(0.0, uTime * 0.22)) : 0.0;
-        float bassInner = smoothstep(uHalfExtent * 0.06 * range, uHalfExtent * 0.20 * range, centerDist);
-        float bassOuter = smoothstep(uHalfExtent * 0.46 * range, uHalfExtent * 0.16 * range, centerDist + bassNoise * 5.2);
-        float bassRegion = mix(0.32, 1.0, bassInner) * bassOuter;
-        float bassRndRaw = smoothstep(0.0, 1.0, mix(rnd, 0.65, uSmoothness * 0.35) + uDensity * 0.45);
-        float bassRnd = mix(0.76, bassRndRaw, min(spikeScale, 1.0));
-        float bassLift = easeLift(uBass, 4.6) * bassRegion * bassRnd;
-        float lowMidNoise = (uLowMid > 0.001 && waveScale > 0.001) ? snoise(pos2D * 0.05 + vec2(uTime * 0.1, 0.0)) : 0.0;
-        float lowMidLift = (uLowMid > 0.001 && waveScale > 0.001) ? flowLift(uLowMid, 2.7) * (lowMidNoise * 0.5 + 0.5) * waveScale : 0.0;
-        float riverFlow = (uMid > 0.001 && waveScale > 0.001) ? sin(pos2D.x * 0.19 + pos2D.y * 0.19 + snoise(pos2D * 0.095) * 2.1 - uTime * 1.9) : 0.0;
-        float midRing = smoothstep(uHalfExtent * 0.08 * range, uHalfExtent * 0.26 * range, centerDist)
-                      * smoothstep(uHalfExtent * 0.92 * range, uHalfExtent * 0.56 * range, centerDist);
-        float midLift = (uMid > 0.001 && waveScale > 0.001) ? flowLift(uMid, 3.6) * smoothstep(-0.18, 0.18, riverFlow) * mix(0.42, 1.0, midRing) * waveScale : 0.0;
-        float highMidRegion = smoothstep(uHalfExtent * 0.22 * range, uHalfExtent * 0.68 * range, centerDist);
-        float highMidLift = (spikeWeight > 0.001 && fract(rnd * 13.3) > 0.74) ? easeLift(uHighMid, 3.4) * highMidRegion * (0.28 + 0.72 * fract(rnd * 7.7)) * spikeWeight : 0.0;
-        float trebleRegion = smoothstep(uHalfExtent * 0.40 * range, uHalfExtent * 0.78 * range, centerDist);
-        float trebleSparkle = sin(pos2D.x * 0.34 - pos2D.y * 0.29 + uTime * 3.8 + rnd * 6.283) * 0.5 + 0.5;
-        float trebleGate = smoothstep(0.32, 0.95, fract(rnd * 19.7));
-        float trebleLift = (uTreble > 0.001 && spikeWeight > 0.001) ? easeLift(uTreble, 3.0) * trebleRegion * mix(0.28, 1.0, trebleSparkle) * (0.35 + 0.65 * trebleGate) * spikeWeight : 0.0;
+        float subLift = 0.0;
+        float bassLift = 0.0;
+        float bassLiftSmooth = 0.0;
+        float lowMidLift = 0.0;
+        float midLift = 0.0;
+        float highMidLift = 0.0;
+        float trebleLift = 0.0;
+        float energyLift = 0.0;
+        float audioElevation = 0.0;
+        float regionElev = 0.0;
+        float spikeElev = 0.0;
 
-        float audioElevation = (subLift + bassLift + lowMidLift + midLift + highMidLift + trebleLift) * uAudioIntensity;
-        if (spikeWeight > 0.001 && rnd > 0.986) {
-          float energyRaw = clamp(uEnergy, 0.0, 1.0);
-          float energyBounce = 1.0 - pow(1.0 - energyRaw, 1.5);
-          energyBounce += sin(energyRaw * 6.283 * 2.0) * exp(-energyRaw * 5.0) * 0.2;
-          audioElevation += energyBounce * 4.8 * uAudioIntensity * spikeWeight;
+        if (uAudioIntensity > 0.001) {
+          if (uSubBass > 0.001) {
+            float subRegion = smoothstep(uHalfExtent * 0.24 * range, 0.0, centerDist);
+            subLift = easeLift(uSubBass, 5.2) * subRegion;
+          }
+          if (uBass > 0.001) {
+            float bassNoise = snoise(pos2D * 0.095 - vec2(0.0, uTime * 0.22));
+            float bassInner = smoothstep(uHalfExtent * 0.06 * range, uHalfExtent * 0.20 * range, centerDist);
+            float bassOuter = smoothstep(uHalfExtent * 0.46 * range, uHalfExtent * 0.16 * range, centerDist + bassNoise * 5.2);
+            float bassRegion = mix(0.32, 1.0, bassInner) * bassOuter;
+            float bassBase = easeLift(uBass, 4.6) * bassRegion;
+            float bassRndRaw = smoothstep(0.0, 1.0, mix(rnd, 0.65, uSmoothness * 0.35) + uDensity * 0.45);
+            float bassRnd = mix(0.76, bassRndRaw, min(spikeScale, 1.0));
+            float bassSmoothRaw = smoothstep(0.0, 1.0, 0.65 + uDensity * 0.45);
+            float bassRndSmooth = mix(0.76, bassSmoothRaw, min(spikeScale, 1.0));
+            bassLift = bassBase * bassRnd;
+            bassLiftSmooth = bassBase * bassRndSmooth;
+          }
+          if (uLowMid > 0.001 && waveScale > 0.001) {
+            float lowMidNoise = snoise(pos2D * 0.05 + vec2(uTime * 0.1, 0.0));
+            lowMidLift = flowLift(uLowMid, 2.7) * (lowMidNoise * 0.5 + 0.5) * waveScale;
+          }
+          if (uMid > 0.001 && waveScale > 0.001) {
+            float riverFlow = sin(pos2D.x * 0.19 + pos2D.y * 0.19 + snoise(pos2D * 0.095) * 2.1 - uTime * 1.9);
+            float midRing = smoothstep(uHalfExtent * 0.08 * range, uHalfExtent * 0.26 * range, centerDist)
+                          * smoothstep(uHalfExtent * 0.92 * range, uHalfExtent * 0.56 * range, centerDist);
+            midLift = flowLift(uMid, 3.6) * smoothstep(-0.18, 0.18, riverFlow) * mix(0.42, 1.0, midRing) * waveScale;
+          }
+          if (uHighMid > 0.001 && spikeWeight > 0.001 && fract(rnd * 13.3) > 0.74) {
+            float highMidRegion = smoothstep(uHalfExtent * 0.22 * range, uHalfExtent * 0.68 * range, centerDist);
+            highMidLift = easeLift(uHighMid, 3.4) * highMidRegion * (0.28 + 0.72 * fract(rnd * 7.7)) * spikeWeight;
+          }
+          if (uTreble > 0.001 && spikeWeight > 0.001) {
+            float trebleRegion = smoothstep(uHalfExtent * 0.40 * range, uHalfExtent * 0.78 * range, centerDist);
+            float trebleSparkle = sin(pos2D.x * 0.34 - pos2D.y * 0.29 + uTime * 3.8 + rnd * 6.283) * 0.5 + 0.5;
+            float trebleGate = smoothstep(0.32, 0.95, fract(rnd * 19.7));
+            trebleLift = easeLift(uTreble, 3.0) * trebleRegion * mix(0.28, 1.0, trebleSparkle) * (0.35 + 0.65 * trebleGate) * spikeWeight;
+          }
+          if (uEnergy > 0.001 && spikeWeight > 0.001 && rnd > 0.986) {
+            float energyRaw = clamp(uEnergy, 0.0, 1.0);
+            float energyBounce = 1.0 - pow(1.0 - energyRaw, 1.5);
+            energyBounce += sin(energyRaw * 6.283 * 2.0) * exp(-energyRaw * 5.0) * 0.2;
+            energyLift = energyBounce * 4.8 * uAudioIntensity * spikeWeight;
+          }
+          float envGain = audioRangeFalloff * centerGain * outerSkirt;
+          audioElevation = ((subLift + bassLift + lowMidLift + midLift + highMidLift + trebleLift) * uAudioIntensity + energyLift) * envGain;
+          regionElev = (subLift + bassLiftSmooth + lowMidLift + midLift) * uAudioIntensity * envGain;
+          spikeElev = ((highMidLift + trebleLift) * uAudioIntensity + energyLift) * envGain;
         }
-        audioElevation *= audioRangeFalloff * centerGain * outerSkirt;
 
         float subPeak = clamp((subLift * centerGain) / 4.8, 0.0, 1.0);
-        float globalPeak = clamp((audioElevation - 3.8) / 5.2, 0.0, 1.0);
-        peakIntensity = clamp(max(subPeak, globalPeak * 0.85), 0.0, 1.0);
+        float regionGlobalPeak = clamp((regionElev - 3.8) / 5.2, 0.0, 1.0);
+        float regionPeak = clamp(max(subPeak, regionGlobalPeak * 0.85), 0.0, 1.0);
+        float regionGate = smoothstep(0.24, 0.86, regionPeak);
+        regionBlend = clamp(pow(regionPeak, 0.85) * regionGate * uPeakEnabled * uPeakIntensity, 0.0, 1.0);
+
+        float spikeMask = smoothstep(0.35, 1.15, spikeElev);
+        spikePeak = clamp((audioElevation - 3.8) / 5.2, 0.0, 1.0) * 0.85 * spikeMask;
         elevation = idleElevation + audioElevation + idleBlockWave;
 
         float rippleElevation = 0.0;
@@ -663,8 +736,9 @@ const MapShaderMaterial = createShaderMaterial(
       vec3 meteorTint = mix(uRippleColor * 1.24, vec3(0.94, 0.97, 1.04), 0.40);
       currentGlow = mix(currentGlow, meteorTint, whiteBlend * 0.84);
 
-      float tallGate = smoothstep(0.45, 0.78, peakIntensity);
-      float peakBlend = pow(peakIntensity, 0.85) * tallGate * uPeakEnabled * uPeakIntensity;
+      float tallGate = smoothstep(0.45, 0.78, spikePeak);
+      float spikeBlend = pow(spikePeak, 0.85) * tallGate * uPeakEnabled * uPeakIntensity;
+      float peakBlend = max(regionBlend, spikeBlend);
       float peakClamped = clamp(peakBlend, 0.0, 1.0);
       currentGlow = mix(currentGlow, uPeakColor * 1.22, peakClamped * 0.80);
       vCurrentGlow = currentGlow;
@@ -727,8 +801,6 @@ const MapShaderMaterial = createShaderMaterial(
       vec3 V = normalize(cameraPosition - vWorldPos);
       bool isTop = N.y > 0.5;
       float relY = vHeightInfo.x;
-      float totalHeight = vHeightInfo.y;
-      float worldDistFromTop = (1.0 - relY) * totalHeight;
 
       float normElevation = vPillarA.x;
       float lowHeightDim  = vPillarA.y;
@@ -838,11 +910,7 @@ const MapShaderMaterial = createShaderMaterial(
         finalColor += specTint * glassSpec * (0.16 + 0.20 * energyBoost) * (0.35 + 0.65 * relY) * distFade;
         finalColor += luminousEdgeHue * fresnel * (0.12 + 0.16 * energyBoost) * relY * distFade;
 
-        // 侧面精细锐利棱线描边（随主体色/高亮色及受光面自然变化，绝非纯白描边）
-        float topSideW = max(0.022, uvFw * totalHeight * 1.05);
-        float topSideLine = (1.0 - smoothstep(topSideW * 0.45, topSideW * 1.45, worldDistFromTop)) * detailFade;
-        finalColor += hairlineCol * topSideLine * lineStrength * (0.20 + 0.10 * energyBoost) * vFaceLight.y;
-
+        // 侧面竖向精细锐利棱线描边（随主体色/高亮色及受光面自然变化，绝非纯白描边）
         float sideEdgeDist = min(vUv.x, 1.0 - vUv.x);
         float sideHairW = max(0.015, uvFw * 1.05);
         float sideHairline = (1.0 - smoothstep(sideHairW * 0.45, sideHairW * 1.45, sideEdgeDist)) * detailFade;
@@ -883,6 +951,7 @@ const FloorDiscMaterial = createShaderMaterial(
   {
     uUseFbo: 0,
     uSimTex0: null,
+    uSimTex1: null,
     uHalfExtent: 84,
     uGridStep: 1.05,
     uGridSize: 96,
@@ -911,6 +980,7 @@ const FloorDiscMaterial = createShaderMaterial(
 
     uniform float uUseFbo;
     uniform sampler2D uSimTex0;
+    uniform sampler2D uSimTex1;
     uniform float uHalfExtent;
     uniform float uGridStep;
     uniform float uGridSize;
@@ -963,6 +1033,7 @@ const FloorDiscMaterial = createShaderMaterial(
       // 邻近升起高柱与峰值的缝隙漫反射余光（避免高亮柱群与俯视中出现深色十字/竖缝）
       float localElev = 0.0;
       float localPeak = 0.0;
+      float localRegionBlend = 0.0;
       if (uUseFbo > 0.5) {
         vec2 gf = (pos2D + vec2(uHalfExtent)) / max(uGridStep, 1e-4);
         ivec2 maxIdx = ivec2(max(int(uGridSize) - 1, 0));
@@ -976,11 +1047,15 @@ const FloorDiscMaterial = createShaderMaterial(
         vec2 sim = mix(s0, s1, fr.y);
         localElev = sim.x;
         localPeak = sim.y;
+        float r0 = mix(texelFetch(uSimTex1, c0, 0).a, texelFetch(uSimTex1, c1, 0).a, fr.x);
+        float r1 = mix(texelFetch(uSimTex1, c2, 0).a, texelFetch(uSimTex1, c3, 0).a, fr.x);
+        localRegionBlend = mix(r0, r1, fr.y);
       } else {
         localElev = uEnergy * 3.5 * smoothstep(uHalfExtent, 0.0, centerDist);
       }
       float tallGate = smoothstep(0.45, 0.78, localPeak);
-      float peakClamped = clamp(pow(localPeak, 0.85) * tallGate * uPeakEnabled * uPeakIntensity, 0.0, 1.0);
+      float spikeClamped = clamp(pow(localPeak, 0.85) * tallGate * uPeakEnabled * uPeakIntensity, 0.0, 1.0);
+      float peakClamped = clamp(max(localRegionBlend, spikeClamped), 0.0, 1.0);
       vec3 bounceCol = mix(localThemeCol, uPeakColor * 1.15, peakClamped * 0.78);
       float bounceT = smoothstep(0.75, 4.8, localElev);
       floorCol = mix(floorCol, bounceCol * glowCap * mix(0.62, 0.46, dim), bounceT * 0.76);

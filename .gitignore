@@ -6,6 +6,7 @@ dist/
 
 # 调试与本地备份产物
 debug/
+promotion-video/
 .playwright-cli/
 .workbuddy/
 
